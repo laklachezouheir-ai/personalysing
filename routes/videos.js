@@ -22,8 +22,10 @@ const auth = require('../lib/auth');
 const store = require('../lib/store');
 const { upload } = require('../lib/uploads');
 const runway = require('../lib/runwayClient');
+const quotas = require('../lib/quotas');
 
 const router = express.Router();
+const MAX_PROMPT_LENGTH = 300;
 
 const VIDEO_DIR = path.join(__dirname, '..', 'data', 'videos');
 if (!fs.existsSync(VIDEO_DIR)) fs.mkdirSync(VIDEO_DIR, { recursive: true });
@@ -97,7 +99,9 @@ router.post('/generate', auth.requireAuth, upload.single('image'), async (req, r
     if (!req.file) {
       return res.status(400).json({ error: 'Une photo du produit est requise.' });
     }
-    const promptText = String(req.body.prompt || '').trim();
+    quotas.assertWithinQuota(req.user.id, 'video');
+
+    const promptText = String(req.body.prompt || '').trim().slice(0, MAX_PROMPT_LENGTH);
     const dataUri = `data:${mimeFromBuffer(req.file.buffer)};base64,${req.file.buffer.toString('base64')}`;
 
     const taskId = await runway.createImageToVideoTask({
@@ -105,6 +109,7 @@ router.post('/generate', auth.requireAuth, upload.single('image'), async (req, r
       promptText,
       duration: 5,
     });
+    quotas.recordUsage(req.user.id, 'video');
 
     const record = store.insert('videos', {
       userId: req.user.id,

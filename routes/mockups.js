@@ -10,8 +10,10 @@ const auth = require('../lib/auth');
 const store = require('../lib/store');
 const { upload } = require('../lib/uploads');
 const replicate = require('../lib/replicateClient');
+const quotas = require('../lib/quotas');
 
 const router = express.Router();
+const MAX_PROMPT_LENGTH = 300;
 
 const MOCKUP_DIR = path.join(__dirname, '..', 'data', 'mockups');
 if (!fs.existsSync(MOCKUP_DIR)) fs.mkdirSync(MOCKUP_DIR, { recursive: true });
@@ -54,17 +56,19 @@ router.post('/generate', auth.requireAuth, upload.single('image'), async (req, r
       return res.status(400).json({ error: 'Une photo du produit est requise.' });
     }
     const presetKey = req.body.style;
-    const customPrompt = String(req.body.prompt || '').trim();
+    const customPrompt = String(req.body.prompt || '').trim().slice(0, MAX_PROMPT_LENGTH);
     const stylePrompt = STYLE_PRESETS[presetKey] || customPrompt;
     if (!stylePrompt) {
       return res.status(400).json({ error: 'Choisissez un style ou décrivez le rendu souhaité.' });
     }
+    quotas.assertWithinQuota(req.user.id, 'mockup');
 
     const dataUri = `data:${mimeFromBuffer(req.file.buffer)};base64,${req.file.buffer.toString('base64')}`;
     const fullPrompt = `Product photography, ${stylePrompt}. Keep the exact same product, do not alter its shape, text or engraving.`;
 
     const urls = await replicate.generateImage({ prompt: fullPrompt, imageDataUri: dataUri });
     if (!urls.length) throw new Error('Aucune image générée.');
+    quotas.recordUsage(req.user.id, 'mockup');
 
     const record = store.insert('mockups', {
       userId: req.user.id,

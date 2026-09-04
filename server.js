@@ -5,6 +5,7 @@ const path = require('path');
 const crypto = require('crypto');
 const express = require('express');
 const session = require('express-session');
+const rateLimit = require('express-rate-limit');
 
 const store = require('./lib/store');
 const auth = require('./lib/auth');
@@ -17,6 +18,11 @@ const videoRoutes = require('./routes/videos');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+const isProduction = process.env.NODE_ENV === 'production';
+
+// Nécessaire pour que les cookies "secure" et le rate limiting basé sur
+// l'IP fonctionnent correctement derrière le proxy inverse de Render.
+if (isProduction) app.set('trust proxy', 1);
 
 app.use(express.json({ limit: '1mb' }));
 app.use(express.urlencoded({ extended: true }));
@@ -25,10 +31,25 @@ app.use(
     secret: process.env.SESSION_SECRET || 'dev_secret_a_changer',
     resave: false,
     saveUninitialized: false,
-    cookie: { httpOnly: true, sameSite: 'lax', maxAge: 30 * 24 * 60 * 60 * 1000 },
+    cookie: {
+      httpOnly: true,
+      sameSite: 'lax',
+      secure: isProduction,
+      maxAge: 30 * 24 * 60 * 60 * 1000,
+    },
   })
 );
 app.use(express.static(path.join(__dirname, 'public')));
+
+// Protection anti-brute-force sur l'authentification : une IP ne peut
+// tenter qu'un nombre limité de connexions/inscriptions par fenêtre de temps.
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 20,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Trop de tentatives, merci de réessayer dans quelques minutes.' },
+});
 
 function asyncRoute(fn) {
   return (req, res, next) => fn(req, res, next).catch(next);
@@ -83,6 +104,7 @@ function parseZone(raw) {
 // ---------------------------------------------------------------------
 app.post(
   '/api/signup',
+  authLimiter,
   asyncRoute(async (req, res) => {
     const user = auth.signup(req.body);
     req.session.userId = user.id;
@@ -92,6 +114,7 @@ app.post(
 
 app.post(
   '/api/login',
+  authLimiter,
   asyncRoute(async (req, res) => {
     const user = auth.login(req.body);
     req.session.userId = user.id;

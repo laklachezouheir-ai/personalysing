@@ -6,8 +6,10 @@ const express = require('express');
 const auth = require('../lib/auth');
 const store = require('../lib/store');
 const deepseek = require('../lib/deepseekClient');
+const quotas = require('../lib/quotas');
 
 const router = express.Router();
+const MAX_DESCRIPTION_LENGTH = 600;
 
 const SYSTEM_PROMPT = `Tu es un expert en référencement (SEO) pour la marketplace Etsy.
 On te donne une courte description d'un produit fait-main ou personnalisé.
@@ -29,17 +31,24 @@ router.post('/generate', auth.requireAuth, async (req, res, next) => {
     if (!description) {
       return res.status(400).json({ error: 'Une description du produit est requise.' });
     }
+    if (description.length > MAX_DESCRIPTION_LENGTH) {
+      return res.status(400).json({
+        error: `Description trop longue (max ${MAX_DESCRIPTION_LENGTH} caractères).`,
+      });
+    }
     if (!deepseek.isConfigured()) {
       return res.status(503).json({
         error: "Optimiseur SEO non configuré. Renseignez DEEPSEEK_API_KEY (voir README.md).",
       });
     }
+    quotas.assertWithinQuota(req.user.id, 'seo');
 
     const raw = await deepseek.chat({
       system: SYSTEM_PROMPT,
       user: description,
       json: true,
     });
+    quotas.recordUsage(req.user.id, 'seo');
 
     let parsed;
     try {

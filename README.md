@@ -184,7 +184,8 @@ personalysing/
 │   ├── etsyClient.js                 # Client OAuth2/API Etsy Open API v3
 │   ├── deepseekClient.js              # Client API DeepSeek (SEO)
 │   ├── replicateClient.js              # Client API Replicate (mockups)
-│   └── runwayClient.js                  # Client API Runway (vidéos)
+│   ├── runwayClient.js                  # Client API Runway (vidéos)
+│   └── quotas.js                         # Quotas quotidiens par vendeur (garde-fou coûts IA)
 ├── assets/fonts/               # Polices embarquées (SIL OFL)
 ├── public/                     # Frontend statique (HTML/CSS/JS, sans framework)
 │   ├── index.html               # Landing + connexion/inscription
@@ -196,6 +197,22 @@ personalysing/
 ├── .env.example
 └── package.json
 ```
+
+## Sécurité et protection des coûts
+
+- **Quotas IA quotidiens par vendeur** (`lib/quotas.js`) : chaque outil payant
+  (SEO, mockups, vidéos) a une limite de générations/jour configurable
+  (`SEO_DAILY_LIMIT`, `MOCKUP_DAILY_LIMIT`, `VIDEO_DAILY_LIMIT`) — protège
+  contre un dérapage de facture (compte piraté, script, clic répété), en
+  particulier pour les vidéos (plusieurs $ par génération). Retourne une
+  erreur 429 claire une fois la limite atteinte.
+- **Longueur des prompts plafonnée** côté serveur (description SEO,
+  prompts mockups/vidéos) pour limiter le coût par appel.
+- **Protection anti-brute-force** sur `/api/signup` et `/api/login`
+  (`express-rate-limit`, 20 tentatives / 15 min / IP).
+- **Cookies de session sécurisés en production** (`secure: true`,
+  `trust proxy` activé) dès que `NODE_ENV=production` — déjà positionné
+  automatiquement par `render.yaml`.
 
 ## Ce qui manque avant un vrai lancement commercial
 
