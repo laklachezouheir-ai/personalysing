@@ -23,6 +23,7 @@ const store = require('../lib/store');
 const { upload } = require('../lib/uploads');
 const runway = require('../lib/runwayClient');
 const quotas = require('../lib/quotas');
+const { requirePro } = require('../lib/billing');
 
 const router = express.Router();
 const MAX_PROMPT_LENGTH = 300;
@@ -89,7 +90,7 @@ router.get('/', auth.requireAuth, (req, res) => {
   res.json({ videos });
 });
 
-router.post('/generate', auth.requireAuth, upload.single('image'), async (req, res, next) => {
+router.post('/generate', auth.requireAuth, requirePro, upload.single('image'), async (req, res, next) => {
   try {
     if (!runway.isConfigured()) {
       return res.status(503).json({

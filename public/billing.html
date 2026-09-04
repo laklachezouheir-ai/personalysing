@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Abonnement — Personalysing</title>
+<link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <nav class="nav">
+    <div class="brand">Personal<span>ysing</span></div>
+    <div class="nav-links">
+      <a href="/dashboard.html" class="btn secondary small">← Retour au tableau de bord</a>
+    </div>
+  </nav>
+
+  <main class="main container" style="padding-top:28px;max-width:640px">
+    <h1>💳 Abonnement</h1>
+
+    <div id="notConfigured" class="card" style="display:none">
+      <p><span class="badge pending">Facturation non configurée</span></p>
+      <p class="muted">
+        Renseignez <code>STRIPE_SECRET_KEY</code>, <code>STRIPE_PRICE_ID</code>
+        et <code>STRIPE_WEBHOOK_SECRET</code> pour activer les abonnements
+        (voir README.md). En attendant, les outils IA restent ouverts à
+        tous les comptes connectés.
+      </p>
+    </div>
+
+    <div id="errorBox" class="error-box"></div>
+
+    <div id="planCard" class="card"></div>
+
+    <div class="card" style="margin-top:16px">
+      <h3 style="margin-top:0">Ce que débloque le plan Pro</h3>
+      <ul class="muted">
+        <li>🔍 Optimiseur SEO (titre + 13 tags + description par IA)</li>
+        <li>🎨 Générateur de mockups produit par IA</li>
+        <li>🎬 Générateur de vidéos produit par IA</li>
+      </ul>
+      <p class="hint">
+        Le configurateur de personnalisation (photos, aperçus de commande)
+        reste gratuit et illimité, avec ou sans abonnement.
+      </p>
+    </div>
+  </main>
+
+  <script src="/common.js"></script>
+  <script>
+    const errorBox = document.getElementById('errorBox');
+    const params = new URLSearchParams(window.location.search);
+
+    function renderPlanCard(status) {
+      const card = document.getElementById('planCard');
+      if (status.isPro) {
+        card.innerHTML = `
+          <p><span class="badge">Plan Pro actif</span></p>
+          <p class="muted">Statut : ${escapeHtml(status.subscriptionStatus || '')}</p>
+          <button id="portalBtn" class="btn secondary" type="button">Gérer mon abonnement</button>
+        `;
+        document.getElementById('portalBtn').addEventListener('click', async () => {
+          hideError(errorBox);
+          try {
+            const { url } = await api('/api/billing/portal', { method: 'POST' });
+            window.location.href = url;
+          } catch (err) {
+            showError(errorBox, err.message);
+          }
+        });
+      } else {
+        card.innerHTML = `
+          <p><span class="badge pending">Plan Gratuit</span></p>
+          <p class="muted">Personnalisation illimitée. Passez Pro pour débloquer les outils IA.</p>
+          <button id="upgradeBtn" class="btn" type="button">Passer Pro</button>
+        `;
+        document.getElementById('upgradeBtn').addEventListener('click', async () => {
+          hideError(errorBox);
+          const btn = document.getElementById('upgradeBtn');
+          btn.disabled = true;
+          try {
+            const { url } = await api('/api/billing/checkout', { method: 'POST' });
+            window.location.href = url;
+          } catch (err) {
+            showError(errorBox, err.message);
+            btn.disabled = false;
+          }
+        });
+      }
+    }
+
+    (async () => {
+      const user = await requireSession();
+      if (!user) return;
+
+      if (params.get('checkout') === 'canceled') {
+        showError(errorBox, "Paiement annulé — vous n'avez pas été facturé.");
+      }
+
+      const status = await api('/api/billing/status');
+      if (!status.configured) {
+        document.getElementById('notConfigured').style.display = '';
+      }
+      renderPlanCard(status);
+    })();
+  </script>
+</body>
+</html>

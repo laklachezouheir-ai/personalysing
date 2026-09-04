@@ -15,6 +15,8 @@ const etsy = require('./lib/etsyClient');
 const seoRoutes = require('./routes/seo');
 const mockupRoutes = require('./routes/mockups');
 const videoRoutes = require('./routes/videos');
+const billingRoutes = require('./routes/billing');
+const { handleStripeWebhook } = require('./lib/stripeWebhookHandler');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -23,6 +25,10 @@ const isProduction = process.env.NODE_ENV === 'production';
 // Nécessaire pour que les cookies "secure" et le rate limiting basé sur
 // l'IP fonctionnent correctement derrière le proxy inverse de Render.
 if (isProduction) app.set('trust proxy', 1);
+
+// Webhook Stripe : DOIT être déclaré avant express.json() ci-dessous,
+// Stripe exigeant le corps brut (non parsé) pour vérifier la signature.
+app.post('/api/stripe/webhook', express.raw({ type: 'application/json' }), handleStripeWebhook);
 
 app.use(express.json({ limit: '1mb' }));
 app.use(express.urlencoded({ extended: true }));
@@ -373,6 +379,7 @@ app.post(
 app.use('/api/seo', seoRoutes);
 app.use('/api/mockups', mockupRoutes);
 app.use('/api/videos', videoRoutes);
+app.use('/api/billing', billingRoutes);
 
 // ---------------------------------------------------------------------
 app.use((err, req, res, next) => { // eslint-disable-line no-unused-vars
@@ -388,6 +395,7 @@ app.listen(PORT, () => {
   if (!require('./lib/deepseekClient').isConfigured()) inactive.push('SEO (DEEPSEEK_API_KEY)');
   if (!require('./lib/replicateClient').isConfigured()) inactive.push('Mockups IA (REPLICATE_API_TOKEN)');
   if (!require('./lib/runwayClient').isConfigured()) inactive.push('Vidéos IA (RUNWAY_API_KEY)');
+  if (!require('./lib/stripeClient').isConfigured()) inactive.push('Facturation Pro (STRIPE_SECRET_KEY/STRIPE_PRICE_ID)');
   if (inactive.length) {
     console.log(`Intégrations inactives (clés absentes) : ${inactive.join(', ')} — le reste de l'app fonctionne normalement.`);
   }

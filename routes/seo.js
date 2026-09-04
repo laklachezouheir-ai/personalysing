@@ -7,6 +7,7 @@ const auth = require('../lib/auth');
 const store = require('../lib/store');
 const deepseek = require('../lib/deepseekClient');
 const quotas = require('../lib/quotas');
+const { requirePro } = require('../lib/billing');
 
 const router = express.Router();
 const MAX_DESCRIPTION_LENGTH = 600;
@@ -25,7 +26,7 @@ router.get('/status', auth.requireAuth, (req, res) => {
   res.json({ configured: deepseek.isConfigured() });
 });
 
-router.post('/generate', auth.requireAuth, async (req, res, next) => {
+router.post('/generate', auth.requireAuth, requirePro, async (req, res, next) => {
   try {
     const description = String(req.body.description || '').trim();
     if (!description) {

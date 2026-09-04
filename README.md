@@ -185,7 +185,10 @@ personalysing/
 │   ├── deepseekClient.js              # Client API DeepSeek (SEO)
 │   ├── replicateClient.js              # Client API Replicate (mockups)
 │   ├── runwayClient.js                  # Client API Runway (vidéos)
-│   └── quotas.js                         # Quotas quotidiens par vendeur (garde-fou coûts IA)
+│   ├── stripeClient.js                   # Client Stripe (SDK officiel)
+│   ├── billing.js                         # Middleware requirePro + isPro()
+│   ├── stripeWebhookHandler.js             # Traite checkout/subscription.*
+│   └── quotas.js                            # Quotas quotidiens par vendeur (garde-fou coûts IA)
 ├── assets/fonts/               # Polices embarquées (SIL OFL)
 ├── public/                     # Frontend statique (HTML/CSS/JS, sans framework)
 │   ├── index.html               # Landing + connexion/inscription
@@ -197,6 +200,47 @@ personalysing/
 ├── .env.example
 └── package.json
 ```
+
+## Abonnement Pro (Stripe)
+
+Modèle économique à deux niveaux :
+
+- **Gratuit** : configurateur de personnalisation illimité (templates,
+  aperçus de commande) — sans coût d'API, reste gratuit indéfiniment.
+- **Pro** (abonnement récurrent) : déverrouille les 3 outils IA (SEO,
+  mockups, vidéos), qui ont un vrai coût d'API par utilisation.
+
+Comme les autres intégrations, **le paywall reste inactif tant que Stripe
+n'est pas configuré** — en développement ou tant que vous n'avez pas mis en
+place la facturation, les outils IA restent ouverts à tout compte connecté
+(protégés uniquement par les quotas quotidiens).
+
+### Mise en place
+
+1. Sur le [dashboard Stripe](https://dashboard.stripe.com/), créez un
+   produit avec un prix récurrent (mensuel) → copiez l'ID du prix
+   (`price_...`).
+2. Récupérez votre clé secrète (`sk_...`) dans **Développeurs > Clés API**.
+3. Renseignez `STRIPE_SECRET_KEY` et `STRIPE_PRICE_ID` dans `.env` (ou dans
+   Environment sur Render).
+4. **Développeurs > Webhooks** → ajoutez un endpoint pointant vers
+   `https://votre-domaine/api/stripe/webhook`, évènements à sélectionner :
+   `checkout.session.completed`, `customer.subscription.updated`,
+   `customer.subscription.deleted`. Copiez le secret de signature
+   (`whsec_...`) dans `STRIPE_WEBHOOK_SECRET`.
+5. Depuis `/billing.html`, un vendeur clique sur « Passer Pro » → redirigé
+   vers Stripe Checkout (hébergé par Stripe, aucune donnée bancaire ne
+   transite par notre serveur) → le webhook met à jour son statut
+   automatiquement. « Gérer mon abonnement » ouvre le Customer Portal
+   Stripe (annulation, moyen de paiement, factures).
+
+### ⚠️ Point d'attention technique
+
+Le webhook (`POST /api/stripe/webhook`) est déclaré dans `server.js`
+**avant** `express.json()` et utilise `express.raw()` : Stripe exige le
+corps brut de la requête pour vérifier la signature. Ne pas déplacer cette
+route après le middleware JSON global, la vérification de signature
+échouerait systématiquement.
 
 ## Sécurité et protection des coûts
 
@@ -216,10 +260,9 @@ personalysing/
 
 ## Ce qui manque avant un vrai lancement commercial
 
-- **Paiement** : aucune intégration Stripe pour l'instant (abonnement,
-  limites d'usage par plan).
 - **Sécurité webhook Etsy** : la vérification de signature n'est pas encore
-  implémentée sur `POST /api/etsy/webhook`.
+  implémentée sur `POST /api/etsy/webhook` (le webhook Stripe, lui, vérifie
+  bien sa signature — voir section Stripe ci-dessus).
 - **Base de données** : le stockage JSON local (`lib/store.js`) est
   volontairement simple pour ce MVP — à remplacer par Postgres/SQLite avant
   d'avoir plusieurs vendeurs actifs en parallèle (accès concurrents).
