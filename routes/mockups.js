@@ -39,11 +39,15 @@ router.get('/status', auth.requireAuth, (req, res) => {
   res.json({ configured: replicate.isConfigured(), presets: Object.keys(STYLE_PRESETS) });
 });
 
-router.get('/', auth.requireAuth, (req, res) => {
-  const mockups = store
-    .filter('mockups', (m) => m.userId === req.user.id)
-    .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
-  res.json({ mockups });
+router.get('/', auth.requireAuth, async (req, res, next) => {
+  try {
+    const mockups = (await store.filter('mockups', (m) => m.userId === req.user.id)).sort(
+      (a, b) => new Date(b.createdAt) - new Date(a.createdAt)
+    );
+    res.json({ mockups });
+  } catch (err) {
+    next(err);
+  }
 });
 
 router.post('/generate', auth.requireAuth, requirePro, upload.single('image'), async (req, res, next) => {
@@ -62,16 +66,16 @@ router.post('/generate', auth.requireAuth, requirePro, upload.single('image'), a
     if (!stylePrompt) {
       return res.status(400).json({ error: 'Choisissez un style ou décrivez le rendu souhaité.' });
     }
-    quotas.assertWithinQuota(req.user.id, 'mockup');
+    await quotas.assertWithinQuota(req.user.id, 'mockup');
 
     const dataUri = `data:${mimeFromBuffer(req.file.buffer)};base64,${req.file.buffer.toString('base64')}`;
     const fullPrompt = `Product photography, ${stylePrompt}. Keep the exact same product, do not alter its shape, text or engraving.`;
 
     const urls = await replicate.generateImage({ prompt: fullPrompt, imageDataUri: dataUri });
     if (!urls.length) throw new Error('Aucune image générée.');
-    quotas.recordUsage(req.user.id, 'mockup');
+    await quotas.recordUsage(req.user.id, 'mockup');
 
-    const record = store.insert('mockups', {
+    const record = await store.insert('mockups', {
       userId: req.user.id,
       style: presetKey || 'custom',
       prompt: stylePrompt,
@@ -88,21 +92,29 @@ router.post('/generate', auth.requireAuth, requirePro, upload.single('image'), a
   }
 });
 
-router.get('/:id/image', auth.requireAuth, (req, res) => {
-  const mockup = store.find('mockups', (m) => m.id === req.params.id && m.userId === req.user.id);
-  if (!mockup) return res.status(404).end();
-  const filePath = path.join(MOCKUP_DIR, `${mockup.id}.png`);
-  if (!fs.existsSync(filePath)) return res.status(404).end();
-  res.sendFile(filePath);
+router.get('/:id/image', auth.requireAuth, async (req, res, next) => {
+  try {
+    const mockup = await store.find('mockups', (m) => m.id === req.params.id && m.userId === req.user.id);
+    if (!mockup) return res.status(404).end();
+    const filePath = path.join(MOCKUP_DIR, `${mockup.id}.png`);
+    if (!fs.existsSync(filePath)) return res.status(404).end();
+    res.sendFile(filePath);
+  } catch (err) {
+    next(err);
+  }
 });
 
-router.delete('/:id', auth.requireAuth, (req, res) => {
-  const mockup = store.find('mockups', (m) => m.id === req.params.id && m.userId === req.user.id);
-  if (!mockup) return res.status(404).json({ error: 'Introuvable.' });
-  store.remove('mockups', mockup.id);
-  const filePath = path.join(MOCKUP_DIR, `${mockup.id}.png`);
-  if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
-  res.json({ ok: true });
+router.delete('/:id', auth.requireAuth, async (req, res, next) => {
+  try {
+    const mockup = await store.find('mockups', (m) => m.id === req.params.id && m.userId === req.user.id);
+    if (!mockup) return res.status(404).json({ error: 'Introuvable.' });
+    await store.remove('mockups', mockup.id);
+    const filePath = path.join(MOCKUP_DIR, `${mockup.id}.png`);
+    if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+    res.json({ ok: true });
+  } catch (err) {
+    next(err);
+  }
 });
 
 module.exports = router;

@@ -32,8 +32,24 @@ app.post('/api/stripe/webhook', express.raw({ type: 'application/json' }), handl
 
 app.use(express.json({ limit: '1mb' }));
 app.use(express.urlencoded({ extended: true }));
+
+// Sessions persistées en base quand Postgres est configuré (les vendeurs
+// restent connectés d'un redéploiement à l'autre) ; sinon, stockage en
+// mémoire par défaut d'express-session (suffisant pour du dev local, mais
+// déconnecte tout le monde à chaque redémarrage du process).
+let sessionStore;
+if (store.usingPostgres) {
+  const PgSession = require('connect-pg-simple')(session);
+  sessionStore = new PgSession({
+    pool: require('./lib/storePostgres').getPool(), // réutilise le pool (SSL déjà configuré pour les PG hébergés)
+    tableName: 'user_sessions',
+    createTableIfMissing: true,
+  });
+}
+
 app.use(
   session({
+    store: sessionStore,
     secret: process.env.SESSION_SECRET || 'dev_secret_a_changer',
     resave: false,
     saveUninitialized: false,
@@ -61,8 +77,8 @@ function asyncRoute(fn) {
   return (req, res, next) => fn(req, res, next).catch(next);
 }
 
-function getOwnedTemplate(userId, templateId) {
-  const template = store.find('templates', (t) => t.id === templateId);
+async function getOwnedTemplate(userId, templateId) {
+  const template = await store.find('templates', (t) => t.id === templateId);
   if (!template || template.userId !== userId) return null;
   return template;
 }
@@ -112,7 +128,7 @@ app.post(
   '/api/signup',
   authLimiter,
   asyncRoute(async (req, res) => {
-    const user = auth.signup(req.body);
+    const user = await auth.signup(req.body);
     req.session.userId = user.id;
     res.status(201).json({ user });
   })
@@ -122,7 +138,7 @@ app.post(
   '/api/login',
   authLimiter,
   asyncRoute(async (req, res) => {
-    const user = auth.login(req.body);
+    const user = await auth.login(req.body);
     req.session.userId = user.id;
     res.json({ user });
   })
@@ -132,11 +148,14 @@ app.post('/api/logout', (req, res) => {
   req.session.destroy(() => res.json({ ok: true }));
 });
 
-app.get('/api/me', (req, res) => {
-  if (!req.session.userId) return res.json({ user: null });
-  const user = store.find('users', (u) => u.id === req.session.userId);
-  res.json({ user: auth.publicUser(user) });
-});
+app.get(
+  '/api/me',
+  asyncRoute(async (req, res) => {
+    if (!req.session.userId) return res.json({ user: null });
+    const user = await store.find('users', (u) => u.id === req.session.userId);
+    res.json({ user: auth.publicUser(user) });
+  })
+);
 
 app.get('/api/health', (req, res) => {
   res.json({ ok: true });
@@ -145,10 +164,14 @@ app.get('/api/health', (req, res) => {
 // ---------------------------------------------------------------------
 // Templates
 // ---------------------------------------------------------------------
-app.get('/api/templates', auth.requireAuth, (req, res) => {
-  const templates = store.filter('templates', (t) => t.userId === req.user.id);
-  res.json({ templates });
-});
+app.get(
+  '/api/templates',
+  auth.requireAuth,
+  asyncRoute(async (req, res) => {
+    const templates = await store.filter('templates', (t) => t.userId === req.user.id);
+    res.json({ templates });
+  })
+);
 
 app.post(
   '/api/templates',
@@ -160,7 +183,7 @@ app.post(
     if (!req.file) throw Object.assign(new Error('Une image de base est requise.'), { status: 400 });
 
     const zone = parseZone(req.body.zone);
-    const template = store.insert('templates', {
+    const template = await store.insert('templates', {
       userId: req.user.id,
       name,
       zone,
@@ -171,17 +194,21 @@ app.post(
   })
 );
 
-app.get('/api/templates/:id', auth.requireAuth, (req, res) => {
-  const template = getOwnedTemplate(req.user.id, req.params.id);
-  if (!template) return res.status(404).json({ error: 'Template introuvable.' });
-  res.json({ template });
-});
+app.get(
+  '/api/templates/:id',
+  auth.requireAuth,
+  asyncRoute(async (req, res) => {
+    const template = await getOwnedTemplate(req.user.id, req.params.id);
+    if (!template) return res.status(404).json({ error: 'Template introuvable.' });
+    res.json({ template });
+  })
+);
 
 app.put(
   '/api/templates/:id',
   auth.requireAuth,
   asyncRoute(async (req, res) => {
-    const template = getOwnedTemplate(req.user.id, req.params.id);
+    const template = await getOwnedTemplate(req.user.id, req.params.id);
     if (!template) return res.status(404).json({ error: 'Template introuvable.' });
 
     const patch = {};
@@ -190,27 +217,35 @@ app.put(
     if ('etsyListingId' in req.body) {
       patch.etsyListingId = req.body.etsyListingId ? String(req.body.etsyListingId).trim() : null;
     }
-    const updated = store.update('templates', template.id, patch);
+    const updated = await store.update('templates', template.id, patch);
     res.json({ template: updated });
   })
 );
 
-app.delete('/api/templates/:id', auth.requireAuth, (req, res) => {
-  const template = getOwnedTemplate(req.user.id, req.params.id);
-  if (!template) return res.status(404).json({ error: 'Template introuvable.' });
-  store.remove('templates', template.id);
-  const imgPath = uploads.templateImagePath(template.id);
-  if (fs.existsSync(imgPath)) fs.unlinkSync(imgPath);
-  res.json({ ok: true });
-});
+app.delete(
+  '/api/templates/:id',
+  auth.requireAuth,
+  asyncRoute(async (req, res) => {
+    const template = await getOwnedTemplate(req.user.id, req.params.id);
+    if (!template) return res.status(404).json({ error: 'Template introuvable.' });
+    await store.remove('templates', template.id);
+    const imgPath = uploads.templateImagePath(template.id);
+    if (fs.existsSync(imgPath)) fs.unlinkSync(imgPath);
+    res.json({ ok: true });
+  })
+);
 
-app.get('/api/templates/:id/image', auth.requireAuth, (req, res) => {
-  const template = getOwnedTemplate(req.user.id, req.params.id);
-  if (!template) return res.status(404).end();
-  const imgPath = uploads.templateImagePath(template.id);
-  if (!fs.existsSync(imgPath)) return res.status(404).end();
-  res.sendFile(imgPath);
-});
+app.get(
+  '/api/templates/:id/image',
+  auth.requireAuth,
+  asyncRoute(async (req, res) => {
+    const template = await getOwnedTemplate(req.user.id, req.params.id);
+    if (!template) return res.status(404).end();
+    const imgPath = uploads.templateImagePath(template.id);
+    if (!fs.existsSync(imgPath)) return res.status(404).end();
+    res.sendFile(imgPath);
+  })
+);
 
 // Aperçu instantané (non enregistré) — utilisé pendant l'édition du
 // template pour ajuster la zone de texte en direct.
@@ -218,7 +253,7 @@ app.post(
   '/api/templates/:id/preview',
   auth.requireAuth,
   asyncRoute(async (req, res) => {
-    const template = getOwnedTemplate(req.user.id, req.params.id);
+    const template = await getOwnedTemplate(req.user.id, req.params.id);
     if (!template) return res.status(404).json({ error: 'Template introuvable.' });
     const imgPath = uploads.templateImagePath(template.id);
     if (!fs.existsSync(imgPath)) return res.status(404).json({ error: 'Image de base manquante.' });
@@ -243,7 +278,7 @@ app.post(
   '/api/templates/:id/generate',
   auth.requireAuth,
   asyncRoute(async (req, res) => {
-    const template = getOwnedTemplate(req.user.id, req.params.id);
+    const template = await getOwnedTemplate(req.user.id, req.params.id);
     if (!template) return res.status(404).json({ error: 'Template introuvable.' });
     const text = String(req.body.text || '').trim();
     if (!text) throw Object.assign(new Error('Le texte de personnalisation est requis.'), { status: 400 });
@@ -251,7 +286,7 @@ app.post(
     const imgPath = uploads.templateImagePath(template.id);
     const buffer = await composePersonalization(fs.readFileSync(imgPath), template.zone, text);
 
-    const preview = store.insert('previews', {
+    const preview = await store.insert('previews', {
       userId: req.user.id,
       templateId: template.id,
       templateName: template.name,
@@ -269,50 +304,70 @@ app.post(
 // ---------------------------------------------------------------------
 // File d'aperçus ("commandes à traiter")
 // ---------------------------------------------------------------------
-app.get('/api/previews', auth.requireAuth, (req, res) => {
-  let previews = store.filter('previews', (p) => p.userId === req.user.id);
-  if (req.query.status) previews = previews.filter((p) => p.status === req.query.status);
-  previews.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
-  res.json({ previews });
-});
+app.get(
+  '/api/previews',
+  auth.requireAuth,
+  asyncRoute(async (req, res) => {
+    let previews = await store.filter('previews', (p) => p.userId === req.user.id);
+    if (req.query.status) previews = previews.filter((p) => p.status === req.query.status);
+    previews.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+    res.json({ previews });
+  })
+);
 
-app.get('/api/previews/:id/image', auth.requireAuth, (req, res) => {
-  const preview = store.find('previews', (p) => p.id === req.params.id && p.userId === req.user.id);
-  if (!preview) return res.status(404).end();
-  const imgPath = uploads.previewImagePath(preview.id);
-  if (!fs.existsSync(imgPath)) return res.status(404).end();
-  res.sendFile(imgPath);
-});
+app.get(
+  '/api/previews/:id/image',
+  auth.requireAuth,
+  asyncRoute(async (req, res) => {
+    const preview = await store.find('previews', (p) => p.id === req.params.id && p.userId === req.user.id);
+    if (!preview) return res.status(404).end();
+    const imgPath = uploads.previewImagePath(preview.id);
+    if (!fs.existsSync(imgPath)) return res.status(404).end();
+    res.sendFile(imgPath);
+  })
+);
 
-app.post('/api/previews/:id/mark-sent', auth.requireAuth, (req, res) => {
-  const preview = store.find('previews', (p) => p.id === req.params.id && p.userId === req.user.id);
-  if (!preview) return res.status(404).json({ error: 'Aperçu introuvable.' });
-  const updated = store.update('previews', preview.id, { status: 'sent' });
-  res.json({ preview: updated });
-});
+app.post(
+  '/api/previews/:id/mark-sent',
+  auth.requireAuth,
+  asyncRoute(async (req, res) => {
+    const preview = await store.find('previews', (p) => p.id === req.params.id && p.userId === req.user.id);
+    if (!preview) return res.status(404).json({ error: 'Aperçu introuvable.' });
+    const updated = await store.update('previews', preview.id, { status: 'sent' });
+    res.json({ preview: updated });
+  })
+);
 
-app.delete('/api/previews/:id', auth.requireAuth, (req, res) => {
-  const preview = store.find('previews', (p) => p.id === req.params.id && p.userId === req.user.id);
-  if (!preview) return res.status(404).json({ error: 'Aperçu introuvable.' });
-  store.remove('previews', preview.id);
-  const imgPath = uploads.previewImagePath(preview.id);
-  if (fs.existsSync(imgPath)) fs.unlinkSync(imgPath);
-  res.json({ ok: true });
-});
+app.delete(
+  '/api/previews/:id',
+  auth.requireAuth,
+  asyncRoute(async (req, res) => {
+    const preview = await store.find('previews', (p) => p.id === req.params.id && p.userId === req.user.id);
+    if (!preview) return res.status(404).json({ error: 'Aperçu introuvable.' });
+    await store.remove('previews', preview.id);
+    const imgPath = uploads.previewImagePath(preview.id);
+    if (fs.existsSync(imgPath)) fs.unlinkSync(imgPath);
+    res.json({ ok: true });
+  })
+);
 
 // ---------------------------------------------------------------------
 // Intégration Etsy (OAuth + webhook order.paid)
 // Inactive tant que ETSY_API_KEY / ETSY_SHARED_SECRET ne sont pas
 // configurés (accès "Commercial" en cours de demande côté Etsy).
 // ---------------------------------------------------------------------
-app.get('/api/etsy/status', auth.requireAuth, (req, res) => {
-  const shop = store.find('shops', (s) => s.userId === req.user.id);
-  res.json({
-    configured: etsy.isConfigured(),
-    connected: Boolean(shop),
-    shop: shop ? { etsyShopId: shop.etsyShopId, connectedAt: shop.createdAt } : null,
-  });
-});
+app.get(
+  '/api/etsy/status',
+  auth.requireAuth,
+  asyncRoute(async (req, res) => {
+    const shop = await store.find('shops', (s) => s.userId === req.user.id);
+    res.json({
+      configured: etsy.isConfigured(),
+      connected: Boolean(shop),
+      shop: shop ? { etsyShopId: shop.etsyShopId, connectedAt: shop.createdAt } : null,
+    });
+  })
+);
 
 app.get('/api/etsy/connect', auth.requireAuth, (req, res) => {
   if (!etsy.isConfigured()) {
@@ -345,7 +400,7 @@ app.get(
     // Le user_id Etsy est préfixé dans l'access_token (format "user_id.xxx").
     const etsyUserId = String(tokenData.access_token).split('.')[0];
 
-    const existing = store.find('shops', (s) => s.userId === req.user.id);
+    const existing = await store.find('shops', (s) => s.userId === req.user.id);
     const payload = {
       userId: req.user.id,
       etsyUserId,
@@ -353,8 +408,8 @@ app.get(
       refreshToken: tokenData.refresh_token,
       expiresAt: new Date(Date.now() + tokenData.expires_in * 1000).toISOString(),
     };
-    if (existing) store.update('shops', existing.id, payload);
-    else store.insert('shops', payload);
+    if (existing) await store.update('shops', existing.id, payload);
+    else await store.insert('shops', payload);
 
     res.redirect('/dashboard.html?etsy=connected');
   })
@@ -390,6 +445,7 @@ app.use((err, req, res, next) => { // eslint-disable-line no-unused-vars
 
 app.listen(PORT, () => {
   console.log(`Personalysing démarré sur http://localhost:${PORT}`);
+  console.log(`Stockage : ${store.usingPostgres ? 'PostgreSQL (DATABASE_URL)' : 'fichier JSON local (dev)'}`);
   const inactive = [];
   if (!etsy.isConfigured()) inactive.push('Etsy (ETSY_API_KEY)');
   if (!require('./lib/deepseekClient').isConfigured()) inactive.push('SEO (DEEPSEEK_API_KEY)');

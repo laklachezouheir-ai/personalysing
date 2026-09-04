@@ -3,7 +3,6 @@
 // du corps brut de la requête, avant le middleware express.json()).
 const express = require('express');
 const auth = require('../lib/auth');
-const store = require('../lib/store');
 const stripeClient = require('../lib/stripeClient');
 const { isPro, appBaseUrl } = require('../lib/billing');
 

@@ -42,14 +42,14 @@ router.post('/generate', auth.requireAuth, requirePro, async (req, res, next) =>
         error: "Optimiseur SEO non configuré. Renseignez DEEPSEEK_API_KEY (voir README.md).",
       });
     }
-    quotas.assertWithinQuota(req.user.id, 'seo');
+    await quotas.assertWithinQuota(req.user.id, 'seo');
 
     const raw = await deepseek.chat({
       system: SYSTEM_PROMPT,
       user: description,
       json: true,
     });
-    quotas.recordUsage(req.user.id, 'seo');
+    await quotas.recordUsage(req.user.id, 'seo');
 
     let parsed;
     try {
@@ -58,7 +58,7 @@ router.post('/generate', auth.requireAuth, requirePro, async (req, res, next) =>
       throw Object.assign(new Error("Réponse IA invalide, merci de réessayer."), { status: 502 });
     }
 
-    const result = store.insert('seoResults', {
+    const result = await store.insert('seoResults', {
       userId: req.user.id,
       input: description,
       title: String(parsed.title || '').slice(0, 140),
@@ -72,18 +72,26 @@ router.post('/generate', auth.requireAuth, requirePro, async (req, res, next) =>
   }
 });
 
-router.get('/history', auth.requireAuth, (req, res) => {
-  const results = store
-    .filter('seoResults', (r) => r.userId === req.user.id)
-    .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
-  res.json({ results });
+router.get('/history', auth.requireAuth, async (req, res, next) => {
+  try {
+    const results = (await store.filter('seoResults', (r) => r.userId === req.user.id)).sort(
+      (a, b) => new Date(b.createdAt) - new Date(a.createdAt)
+    );
+    res.json({ results });
+  } catch (err) {
+    next(err);
+  }
 });
 
-router.delete('/:id', auth.requireAuth, (req, res) => {
-  const result = store.find('seoResults', (r) => r.id === req.params.id && r.userId === req.user.id);
-  if (!result) return res.status(404).json({ error: 'Introuvable.' });
-  store.remove('seoResults', result.id);
-  res.json({ ok: true });
+router.delete('/:id', auth.requireAuth, async (req, res, next) => {
+  try {
+    const result = await store.find('seoResults', (r) => r.id === req.params.id && r.userId === req.user.id);
+    if (!result) return res.status(404).json({ error: 'Introuvable.' });
+    await store.remove('seoResults', result.id);
+    res.json({ ok: true });
+  } catch (err) {
+    next(err);
+  }
 });
 
 module.exports = router;

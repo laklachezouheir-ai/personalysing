@@ -11,6 +11,11 @@ services:
         value: production
       - key: SESSION_SECRET
         generateValue: true
+      # Chaîne de connexion PostgreSQL (Neon, Supabase...) — voir README.md
+      # "Base de données". Absente = repli sur fichier JSON local, à éviter
+      # en production (disque non persistant sur le plan gratuit).
+      - key: DATABASE_URL
+        sync: false
       - key: ETSY_API_KEY
         sync: false
       - key: ETSY_SHARED_SECRET

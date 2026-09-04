@@ -44,7 +44,7 @@ async function trackTask(recordId, taskId) {
   const startedAt = Date.now();
   const tick = async () => {
     try {
-      const record = store.find('videos', (v) => v.id === recordId);
+      const record = await store.find('videos', (v) => v.id === recordId);
       if (!record || record.status !== 'processing') return; // supprimé ou déjà terminé
 
       const task = await runway.getTask(taskId);
@@ -54,18 +54,18 @@ async function trackTask(recordId, taskId) {
         const res = await fetch(videoUrl);
         const buffer = Buffer.from(await res.arrayBuffer());
         fs.writeFileSync(path.join(VIDEO_DIR, `${recordId}.mp4`), buffer);
-        store.update('videos', recordId, { status: 'ready' });
+        await store.update('videos', recordId, { status: 'ready' });
         return;
       }
       if (task.status === 'FAILED') {
-        store.update('videos', recordId, {
+        await store.update('videos', recordId, {
           status: 'failed',
           error: task.failure || 'Échec de la génération.',
         });
         return;
       }
       if (Date.now() - startedAt > MAX_POLL_MS) {
-        store.update('videos', recordId, {
+        await store.update('videos', recordId, {
           status: 'failed',
           error: "Délai de génération dépassé — vérifiez le statut directement sur le tableau de bord Runway.",
         });
@@ -73,7 +73,7 @@ async function trackTask(recordId, taskId) {
       }
       setTimeout(tick, POLL_INTERVAL_MS);
     } catch (err) {
-      store.update('videos', recordId, { status: 'failed', error: err.message });
+      await store.update('videos', recordId, { status: 'failed', error: err.message });
     }
   };
   setTimeout(tick, POLL_INTERVAL_MS);
@@ -83,11 +83,15 @@ router.get('/status', auth.requireAuth, (req, res) => {
   res.json({ configured: runway.isConfigured() });
 });
 
-router.get('/', auth.requireAuth, (req, res) => {
-  const videos = store
-    .filter('videos', (v) => v.userId === req.user.id)
-    .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
-  res.json({ videos });
+router.get('/', auth.requireAuth, async (req, res, next) => {
+  try {
+    const videos = (await store.filter('videos', (v) => v.userId === req.user.id)).sort(
+      (a, b) => new Date(b.createdAt) - new Date(a.createdAt)
+    );
+    res.json({ videos });
+  } catch (err) {
+    next(err);
+  }
 });
 
 router.post('/generate', auth.requireAuth, requirePro, upload.single('image'), async (req, res, next) => {
@@ -100,7 +104,7 @@ router.post('/generate', auth.requireAuth, requirePro, upload.single('image'), a
     if (!req.file) {
       return res.status(400).json({ error: 'Une photo du produit est requise.' });
     }
-    quotas.assertWithinQuota(req.user.id, 'video');
+    await quotas.assertWithinQuota(req.user.id, 'video');
 
     const promptText = String(req.body.prompt || '').trim().slice(0, MAX_PROMPT_LENGTH);
     const dataUri = `data:${mimeFromBuffer(req.file.buffer)};base64,${req.file.buffer.toString('base64')}`;
@@ -110,9 +114,9 @@ router.post('/generate', auth.requireAuth, requirePro, upload.single('image'), a
       promptText,
       duration: 5,
     });
-    quotas.recordUsage(req.user.id, 'video');
+    await quotas.recordUsage(req.user.id, 'video');
 
-    const record = store.insert('videos', {
+    const record = await store.insert('videos', {
       userId: req.user.id,
       prompt: promptText,
       runwayTaskId: taskId,
@@ -127,21 +131,29 @@ router.post('/generate', auth.requireAuth, requirePro, upload.single('image'), a
   }
 });
 
-router.get('/:id/file', auth.requireAuth, (req, res) => {
-  const video = store.find('videos', (v) => v.id === req.params.id && v.userId === req.user.id);
-  if (!video) return res.status(404).end();
-  const filePath = path.join(VIDEO_DIR, `${video.id}.mp4`);
-  if (!fs.existsSync(filePath)) return res.status(404).end();
-  res.sendFile(filePath);
+router.get('/:id/file', auth.requireAuth, async (req, res, next) => {
+  try {
+    const video = await store.find('videos', (v) => v.id === req.params.id && v.userId === req.user.id);
+    if (!video) return res.status(404).end();
+    const filePath = path.join(VIDEO_DIR, `${video.id}.mp4`);
+    if (!fs.existsSync(filePath)) return res.status(404).end();
+    res.sendFile(filePath);
+  } catch (err) {
+    next(err);
+  }
 });
 
-router.delete('/:id', auth.requireAuth, (req, res) => {
-  const video = store.find('videos', (v) => v.id === req.params.id && v.userId === req.user.id);
-  if (!video) return res.status(404).json({ error: 'Introuvable.' });
-  store.remove('videos', video.id);
-  const filePath = path.join(VIDEO_DIR, `${video.id}.mp4`);
-  if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
-  res.json({ ok: true });
+router.delete('/:id', auth.requireAuth, async (req, res, next) => {
+  try {
+    const video = await store.find('videos', (v) => v.id === req.params.id && v.userId === req.user.id);
+    if (!video) return res.status(404).json({ error: 'Introuvable.' });
+    await store.remove('videos', video.id);
+    const filePath = path.join(VIDEO_DIR, `${video.id}.mp4`);
+    if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+    res.json({ ok: true });
+  } catch (err) {
+    next(err);
+  }
 });
 
 module.exports = router;

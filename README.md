@@ -85,6 +85,52 @@ Pour le développement avec rechargement automatique :
 npm run dev
 ```
 
+Sans `DATABASE_URL`, l'app tourne directement sur un fichier JSON local —
+pratique pour tester sans rien installer, voir section **Base de données**
+ci-dessous pour les limites de ce mode.
+
+## Base de données
+
+Deux backends de stockage, sélectionnés automatiquement :
+
+- **`DATABASE_URL` absente** → fichier JSON local (`data/db.json`,
+  `lib/storeJson.js`). Zéro installation, pratique pour développer, mais
+  **à éviter en production** : sur Render (plan gratuit), le disque n'est
+  pas persistant — toutes les données disparaissent à chaque redéploiement
+  ou réveil du service après une mise en veille.
+- **`DATABASE_URL` définie** → PostgreSQL (`lib/storePostgres.js`),
+  persistant indépendamment du disque de l'app. Les sessions de connexion
+  sont aussi persistées en base dans ce cas (`connect-pg-simple`) — sans
+  ça, tous les vendeurs seraient déconnectés à chaque redéploiement.
+
+### Mise en place (recommandé avant tout usage réel)
+
+Le Postgres gratuit de Render **expire après 30 jours** (données supprimées
+ensuite) — pas adapté pour de vraies données. Deux alternatives gratuites
+et durables :
+
+- **[Neon](https://neon.tech/)** (recommandé) — Postgres serverless, 0,5 Go
+  gratuit, pas d'expiration, pas de carte bancaire requise.
+- **[Supabase](https://supabase.com/)** — alternative équivalente.
+
+1. Créez un projet, copiez la chaîne de connexion (`postgresql://...`).
+2. Renseignez `DATABASE_URL` dans `.env` (local) ou dans Environment sur
+   Render.
+3. Au démarrage, l'app crée automatiquement les tables nécessaires
+   (`collections`, `user_sessions`) — aucune migration manuelle à lancer.
+
+### Détails techniques
+
+`lib/store.js` expose une API commune (`list`, `find`, `filter`, `insert`,
+`update`, `remove`), 100% asynchrone, quel que soit le backend actif — le
+reste de l'app (routes, middlewares) ne sait pas quel backend est utilisé.
+Chaque "collection" (users, templates, previews...) est stockée comme des
+lignes JSONB dans une table générique plutôt que des tables dédiées par
+type : ça évite d'écrire une migration de schéma à chaque nouveau champ,
+au prix d'un filtrage fait côté Node plutôt qu'en SQL indexé — un choix
+pragmatique pour ce stade du produit, à revoir si une collection (ex :
+`aiUsage`) grossit beaucoup.
+
 ## Connexion Etsy (optionnelle, désactivée par défaut)
 
 La connexion à l'API Etsy est **inactive tant que `ETSY_API_KEY` et
@@ -155,14 +201,18 @@ Le dépôt contient un `render.yaml` (Blueprint Render) prêt à l'emploi.
 
 **⚠️ Important — disque non persistant (plan gratuit)** : sur le plan
 gratuit, le système de fichiers est réinitialisé à chaque déploiement et à
-chaque réveil du service après mise en veille (inactivité). Contrairement à
-Awsert, cette appli stocke des données qui comptent pour de vrai
-(templates, images générées) dans `data/` — **elles seront donc perdues**
-dans ces cas-là. Le plan gratuit convient pour tester l'interface, pas pour
-un usage avec de vrais vendeurs. Avant un usage réel, passer au plan
-**Starter** (~7$/mois) et ajouter un disque persistant monté sur
-`./data` (voir la doc Render sur les disques), ou migrer vers un vrai
-stockage (base de données + stockage objet S3-compatible).
+chaque réveil du service après mise en veille (inactivité).
+
+- Avec `DATABASE_URL` configurée (voir section **Base de données**), les
+  **données** (comptes, templates, historique) survivent maintenant à ces
+  redémarrages — c'est le problème principal réglé.
+- Les **fichiers binaires** (photos de template, aperçus/mockups/vidéos
+  générés) restent en revanche stockés sur le disque local de l'app
+  (`data/uploads`, `data/previews`...) et **sont toujours perdus** dans ces
+  cas-là, même avec Postgres configuré. Pour les conserver de façon fiable,
+  passer au plan **Starter** (~7$/mois) et ajouter un disque persistant
+  monté sur `./data`, ou migrer ces fichiers vers un stockage objet
+  S3-compatible (amélioration future, non faite ici).
 
 ## Structure du projet
 
@@ -176,8 +226,10 @@ personalysing/
 ├── lib/
 │   ├── fontSetup.js           # Enregistre assets/fonts auprès de fontconfig
 │   ├── fonts.js                # Registre des polices disponibles
-│   ├── store.js                 # Stockage JSON local (data/db.json)
-│   ├── auth.js                   # Inscription / connexion / sessions
+│   ├── store.js                 # API de stockage commune (dispatch JSON/Postgres)
+│   ├── storeJson.js              # Backend fichier JSON local (repli dev)
+│   ├── storePostgres.js           # Backend PostgreSQL (actif si DATABASE_URL)
+│   ├── auth.js                     # Inscription / connexion / sessions
 │   ├── uploads.js                 # Upload d'images (multer + normalisation sharp)
 │   ├── imageCompose.js             # Moteur de composition texte-sur-image
 │   ├── perspectiveWarp.js           # Déformation en perspective (corner-pin)
@@ -263,16 +315,13 @@ route après le middleware JSON global, la vérification de signature
 - **Sécurité webhook Etsy** : la vérification de signature n'est pas encore
   implémentée sur `POST /api/etsy/webhook` (le webhook Stripe, lui, vérifie
   bien sa signature — voir section Stripe ci-dessus).
-- **Base de données** : le stockage JSON local (`lib/store.js`) est
-  volontairement simple pour ce MVP — à remplacer par Postgres/SQLite avant
-  d'avoir plusieurs vendeurs actifs en parallèle (accès concurrents).
 - **Etsy Commercial Access** : à demander dès que le produit est validé par
   les premiers utilisateurs en mode manuel (voir stratégie de lancement).
 
 ## Limites connues
 
-- Un seul fichier de session en mémoire (`express-session` par défaut) :
-  suffisant pour tester, mais à faire persister (ex : Redis) en production
-  avec plusieurs instances du serveur.
 - Le glisser-déposer de la zone de texte dans l'éditeur ne gère pas encore
   le tactile (souris uniquement).
+- Le mode fichier JSON (sans `DATABASE_URL`) reste mono-process : pas
+  adapté si vous faites tourner plusieurs instances du serveur en
+  parallèle. Avec Postgres configuré, ce n'est plus une limite.
