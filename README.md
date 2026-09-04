@@ -86,6 +86,31 @@ Une fois connectée, la boutique peut recevoir les commandes via le webhook
 webhook reste à implémenter avant mise en production réelle — voir le
 `TODO` dans `server.js`).
 
+## Déploiement sur Render
+
+Le dépôt contient un `render.yaml` (Blueprint Render) prêt à l'emploi.
+
+1. Sur [render.com](https://render.com), **New +** → **Blueprint**.
+2. Connecte ce dépôt GitHub (`laklachezouheir-ai/personalysing`) et sélectionne
+   la branche à déployer.
+3. Render détecte `render.yaml` et propose de créer le service web
+   `personalysing` (build : `npm install`, démarrage : `npm start`).
+   `SESSION_SECRET` est généré automatiquement ; les variables `ETSY_*`
+   restent vides tant que l'intégration Etsy n'est pas activée.
+4. **Apply** / **Create Web Service**. Render fournit une URL du type
+   `https://personalysing-xxxx.onrender.com`.
+
+**⚠️ Important — disque non persistant (plan gratuit)** : sur le plan
+gratuit, le système de fichiers est réinitialisé à chaque déploiement et à
+chaque réveil du service après mise en veille (inactivité). Contrairement à
+Awsert, cette appli stocke des données qui comptent pour de vrai
+(templates, images générées) dans `data/` — **elles seront donc perdues**
+dans ces cas-là. Le plan gratuit convient pour tester l'interface, pas pour
+un usage avec de vrais vendeurs. Avant un usage réel, passer au plan
+**Starter** (~7$/mois) et ajouter un disque persistant monté sur
+`./data` (voir la doc Render sur les disques), ou migrer vers un vrai
+stockage (base de données + stockage objet S3-compatible).
+
 ## Structure du projet
 
 ```
