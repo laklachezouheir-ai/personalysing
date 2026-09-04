@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Vidéos IA — Personalysing</title>
+<link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <nav class="nav">
+    <div class="brand">Personal<span>ysing</span></div>
+    <div class="nav-links">
+      <a href="/dashboard.html" class="btn secondary small">← Retour au tableau de bord</a>
+    </div>
+  </nav>
+
+  <main class="main container" style="padding-top:28px;max-width:760px">
+    <h1>🎬 Générateur de vidéos produit IA</h1>
+    <p class="muted">
+      Envoyez une photo de votre produit, l'IA génère une courte vidéo animée
+      pour votre fiche Etsy ou vos réseaux sociaux.
+      <br /><span class="hint">⚠️ Le plus coûteux des outils IA : plusieurs dollars par vidéo, génération de 1 à quelques minutes. Téléchargez vos vidéos rapidement (stockage non garanti dans la durée).</span>
+    </p>
+
+    <div id="notConfigured" class="card" style="display:none">
+      <p><span class="badge pending">Non configuré</span></p>
+      <p class="muted">
+        Renseignez <code>RUNWAY_API_KEY</code> dans les variables
+        d'environnement pour activer cet outil (voir README.md).
+      </p>
+    </div>
+
+    <div id="errorBox" class="error-box"></div>
+
+    <div id="formCard" class="card">
+      <div class="field">
+        <label for="videoImage">Photo du produit</label>
+        <input id="videoImage" type="file" accept="image/png,image/jpeg,image/webp" />
+      </div>
+      <div class="field">
+        <label for="prompt">Description de l'animation souhaitée</label>
+        <input id="prompt" type="text" placeholder="ex : légère rotation du produit, éclairage doux qui pulse" />
+      </div>
+      <button id="generateBtn" class="btn block" type="button">Générer la vidéo</button>
+    </div>
+
+    <h2 style="margin-top:32px">Mes vidéos</h2>
+    <div id="videoList"></div>
+  </main>
+
+  <script src="/common.js"></script>
+  <script>
+    const errorBox = document.getElementById('errorBox');
+    let pollTimer = null;
+
+    function statusBadge(status) {
+      if (status === 'ready') return '<span class="badge">Prête</span>';
+      if (status === 'failed') return '<span class="badge" style="background:#fbeeee;color:var(--danger)">Échec</span>';
+      return '<span class="badge pending">En cours…</span>';
+    }
+
+    async function loadVideos() {
+      const { videos } = await api('/api/videos');
+      const list = document.getElementById('videoList');
+      if (!videos.length) {
+        list.innerHTML = `<div class="empty-state">Aucune vidéo pour l'instant.</div>`;
+      } else {
+        list.innerHTML = videos
+          .map(
+            (v) => `
+          <div class="preview-item" data-id="${v.id}" style="align-items:flex-start">
+            <div class="info">
+              <strong>${v.prompt ? escapeHtml(v.prompt) : 'Vidéo produit'}</strong><br/>
+              ${statusBadge(v.status)}
+              ${v.status === 'failed' && v.error ? `<div class="hint" style="color:var(--danger)">${escapeHtml(v.error)}</div>` : ''}
+              ${v.status === 'ready' ? `<video src="/api/videos/${v.id}/file" controls style="max-width:280px;border-radius:8px;margin-top:8px;display:block"></video>` : ''}
+            </div>
+            <div class="actions">
+              ${v.status === 'ready' ? `<a class="btn small secondary" href="/api/videos/${v.id}/file" download="video-${v.id}.mp4">Télécharger</a>` : ''}
+              <button class="btn small danger delete-btn" type="button">Supprimer</button>
+            </div>
+          </div>`
+          )
+          .join('');
+        list.querySelectorAll('.delete-btn').forEach((btn) => {
+          btn.addEventListener('click', async () => {
+            const id = btn.closest('.preview-item').dataset.id;
+            await api(`/api/videos/${id}`, { method: 'DELETE' });
+            loadVideos();
+          });
+        });
+      }
+
+      const stillProcessing = videos.some((v) => v.status === 'processing');
+      clearTimeout(pollTimer);
+      if (stillProcessing) pollTimer = setTimeout(loadVideos, 6000);
+    }
+
+    document.getElementById('generateBtn').addEventListener('click', async () => {
+      hideError(errorBox);
+      const file = document.getElementById('videoImage').files[0];
+      const prompt = document.getElementById('prompt').value.trim();
+      if (!file) {
+        showError(errorBox, 'Merci de choisir une photo.');
+        return;
+      }
+      const btn = document.getElementById('generateBtn');
+      btn.disabled = true;
+      btn.textContent = 'Envoi en cours...';
+      try {
+        const fd = new FormData();
+        fd.append('image', file);
+        fd.append('prompt', prompt);
+        await api('/api/videos/generate', { method: 'POST', body: fd });
+        await loadVideos();
+      } catch (err) {
+        showError(errorBox, err.message);
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Générer la vidéo';
+      }
+    });
+
+    (async () => {
+      const user = await requireSession();
+      if (!user) return;
+      const { configured } = await api('/api/videos/status');
+      if (!configured) {
+        document.getElementById('notConfigured').style.display = '';
+        document.getElementById('formCard').style.display = 'none';
+      }
+      await loadVideos();
+    })();
+  </script>
+</body>
+</html>

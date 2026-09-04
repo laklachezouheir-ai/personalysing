@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Mockups IA — Personalysing</title>
+<link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <nav class="nav">
+    <div class="brand">Personal<span>ysing</span></div>
+    <div class="nav-links">
+      <a href="/dashboard.html" class="btn secondary small">← Retour au tableau de bord</a>
+    </div>
+  </nav>
+
+  <main class="main container" style="padding-top:28px;max-width:760px">
+    <h1>🎨 Générateur de mockups IA</h1>
+    <p class="muted">
+      Envoyez une photo brute de votre produit, choisissez une mise en scène,
+      l'IA génère un visuel retravaillé pour votre fiche Etsy.
+      <br /><span class="hint">Coût indicatif : ~0,01-0,08$ par génération.</span>
+    </p>
+
+    <div id="notConfigured" class="card" style="display:none">
+      <p><span class="badge pending">Non configuré</span></p>
+      <p class="muted">
+        Renseignez <code>REPLICATE_API_TOKEN</code> dans les variables
+        d'environnement pour activer cet outil (voir README.md).
+      </p>
+    </div>
+
+    <div id="errorBox" class="error-box"></div>
+
+    <div id="formCard" class="card">
+      <div class="field">
+        <label for="mockupImage">Photo du produit</label>
+        <input id="mockupImage" type="file" accept="image/png,image/jpeg,image/webp" />
+      </div>
+      <div class="field">
+        <label for="style">Style de mise en scène</label>
+        <select id="style">
+          <option value="studio">Studio, fond blanc</option>
+          <option value="wood_table">Sur table en bois, ambiance chaleureuse</option>
+          <option value="hand_held">Tenu en main</option>
+          <option value="outdoor">Extérieur, lumière naturelle</option>
+          <option value="marble">Flat-lay sur marbre</option>
+          <option value="custom">Personnalisé (décrire ci-dessous)</option>
+        </select>
+      </div>
+      <div class="field" id="customPromptField" style="display:none">
+        <label for="customPrompt">Décrivez le rendu souhaité</label>
+        <input id="customPrompt" type="text" placeholder="ex : posé sur un lit de pétales de rose, lumière douce du matin" />
+      </div>
+      <button id="generateBtn" class="btn block" type="button">Générer le mockup</button>
+    </div>
+
+    <h2 style="margin-top:32px">Mes mockups</h2>
+    <div id="mockupGrid" class="grid cols-2"></div>
+  </main>
+
+  <script src="/common.js"></script>
+  <script>
+    const errorBox = document.getElementById('errorBox');
+
+    document.getElementById('style').addEventListener('change', (e) => {
+      document.getElementById('customPromptField').style.display = e.target.value === 'custom' ? '' : 'none';
+    });
+
+    async function loadMockups() {
+      const { mockups } = await api('/api/mockups');
+      const grid = document.getElementById('mockupGrid');
+      if (!mockups.length) {
+        grid.innerHTML = `<div class="empty-state">Aucun mockup pour l'instant.</div>`;
+        return;
+      }
+      grid.innerHTML = mockups
+        .map(
+          (m) => `
+        <div class="card tpl-card" data-id="${m.id}">
+          <img src="/api/mockups/${m.id}/image" alt="" />
+          <div class="row">
+            <a class="btn small secondary" href="/api/mockups/${m.id}/image" download="mockup-${m.id}.png">Télécharger</a>
+            <button class="btn small danger delete-btn" type="button">Supprimer</button>
+          </div>
+        </div>`
+        )
+        .join('');
+      grid.querySelectorAll('.delete-btn').forEach((btn) => {
+        btn.addEventListener('click', async () => {
+          const id = btn.closest('[data-id]').dataset.id;
+          await api(`/api/mockups/${id}`, { method: 'DELETE' });
+          loadMockups();
+        });
+      });
+    }
+
+    document.getElementById('generateBtn').addEventListener('click', async () => {
+      hideError(errorBox);
+      const file = document.getElementById('mockupImage').files[0];
+      const style = document.getElementById('style').value;
+      const customPrompt = document.getElementById('customPrompt').value.trim();
+      if (!file) {
+        showError(errorBox, 'Merci de choisir une photo.');
+        return;
+      }
+      if (style === 'custom' && !customPrompt) {
+        showError(errorBox, 'Décrivez le rendu souhaité.');
+        return;
+      }
+      const btn = document.getElementById('generateBtn');
+      btn.disabled = true;
+      btn.textContent = 'Génération en cours (10-30s)...';
+      try {
+        const fd = new FormData();
+        fd.append('image', file);
+        fd.append('style', style === 'custom' ? '' : style);
+        fd.append('prompt', customPrompt);
+        await api('/api/mockups/generate', { method: 'POST', body: fd });
+        await loadMockups();
+      } catch (err) {
+        showError(errorBox, err.message);
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Générer le mockup';
+      }
+    });
+
+    (async () => {
+      const user = await requireSession();
+      if (!user) return;
+      const { configured } = await api('/api/mockups/status');
+      if (!configured) {
+        document.getElementById('notConfigured').style.display = '';
+        document.getElementById('formCard').style.display = 'none';
+      }
+      await loadMockups();
+    })();
+  </script>
+</body>
+</html>

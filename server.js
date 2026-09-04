@@ -11,6 +11,9 @@ const auth = require('./lib/auth');
 const uploads = require('./lib/uploads');
 const { composePersonalization } = require('./lib/imageCompose');
 const etsy = require('./lib/etsyClient');
+const seoRoutes = require('./routes/seo');
+const mockupRoutes = require('./routes/mockups');
+const videoRoutes = require('./routes/videos');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -341,6 +344,14 @@ app.post(
 );
 
 // ---------------------------------------------------------------------
+// Fonctionnalités IA additionnelles (optionnelles, chacune inactive tant
+// que sa clé API n'est pas configurée — voir README.md).
+// ---------------------------------------------------------------------
+app.use('/api/seo', seoRoutes);
+app.use('/api/mockups', mockupRoutes);
+app.use('/api/videos', videoRoutes);
+
+// ---------------------------------------------------------------------
 app.use((err, req, res, next) => { // eslint-disable-line no-unused-vars
   const status = err.status || 500;
   if (status >= 500) console.error(err);
@@ -349,9 +360,12 @@ app.use((err, req, res, next) => { // eslint-disable-line no-unused-vars
 
 app.listen(PORT, () => {
   console.log(`Personalysing démarré sur http://localhost:${PORT}`);
-  if (!etsy.isConfigured()) {
-    console.log(
-      "Intégration Etsy inactive (ETSY_API_KEY / ETSY_SHARED_SECRET absents) — le mode génération manuelle reste pleinement fonctionnel."
-    );
+  const inactive = [];
+  if (!etsy.isConfigured()) inactive.push('Etsy (ETSY_API_KEY)');
+  if (!require('./lib/deepseekClient').isConfigured()) inactive.push('SEO (DEEPSEEK_API_KEY)');
+  if (!require('./lib/replicateClient').isConfigured()) inactive.push('Mockups IA (REPLICATE_API_TOKEN)');
+  if (!require('./lib/runwayClient').isConfigured()) inactive.push('Vidéos IA (RUNWAY_API_KEY)');
+  if (inactive.length) {
+    console.log(`Intégrations inactives (clés absentes) : ${inactive.join(', ')} — le reste de l'app fonctionne normalement.`);
   }
 });

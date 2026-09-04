@@ -20,6 +20,10 @@
       <a href="#previews" class="side-link active" data-tab="previews">📥 Aperçus à envoyer</a>
       <a href="#templates" class="side-link" data-tab="templates">🖼️ Mes templates</a>
       <a href="#etsy" class="side-link" data-tab="etsy">🔌 Connexion Etsy</a>
+      <div class="hint" style="margin:16px 0 6px;text-transform:uppercase;letter-spacing:.04em">Outils IA</div>
+      <a href="/seo.html" class="side-link">🔍 Optimiseur SEO</a>
+      <a href="/mockups.html" class="side-link">🎨 Mockups IA</a>
+      <a href="/videos.html" class="side-link">🎬 Vidéos IA</a>
     </aside>
 
     <main class="main">
@@ -60,6 +64,7 @@
       etsy: document.getElementById('panel-etsy'),
     };
     tabs.forEach((tab) => {
+      if (!tab.dataset.tab) return; // lien de navigation classique (ex: outils IA), pas un onglet
       tab.addEventListener('click', (e) => {
         e.preventDefault();
         tabs.forEach((t) => t.classList.remove('active'));

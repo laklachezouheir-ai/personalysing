@@ -107,6 +107,38 @@ Une fois connectée, la boutique peut recevoir les commandes via le webhook
 webhook reste à implémenter avant mise en production réelle — voir le
 `TODO` dans `server.js`).
 
+## Outils IA additionnels (optionnels)
+
+Trois outils supplémentaires, chacun **inactif tant que sa clé API n'est
+pas configurée** (même principe que l'intégration Etsy) :
+
+| Outil | Page | Clé requise | Fournisseur | Coût indicatif |
+|---|---|---|---|---|
+| Optimiseur SEO (titre + 13 tags + description) | `/seo.html` | `DEEPSEEK_API_KEY` | [DeepSeek](https://platform.deepseek.com/) | très faible par génération |
+| Générateur de mockups produit | `/mockups.html` | `REPLICATE_API_TOKEN` | [Replicate](https://replicate.com/) (Flux) | ~0,01-0,08$ par image |
+| Générateur de vidéos produit | `/videos.html` | `RUNWAY_API_KEY` | [Runway](https://dev.runwayml.com/) | plusieurs $ par vidéo — le plus coûteux |
+
+### ⚠️ À vérifier avant mise en production
+
+Les API de génération d'image/vidéo par IA évoluent vite (noms de modèles,
+schémas d'entrée). `lib/replicateClient.js` et `lib/runwayClient.js`
+utilisent des valeurs par défaut correctes au moment de l'écriture
+(`REPLICATE_MODEL`, `RUNWAY_MODEL`, overridables par variable
+d'environnement), mais **à re-vérifier sur la documentation officielle du
+fournisseur** avant de compter dessus en production — un modèle peut être
+renommé ou son schéma d'entrée changer sans préavis.
+
+### Générateur de vidéos : limites à connaître
+
+- Génération asynchrone (jusqu'à ~10 min) suivie en mémoire côté serveur —
+  un redémarrage pendant une génération en cours la laisse bloquée sur
+  "en cours" côté app (elle continue côté Runway ; vérifier son tableau de
+  bord dans ce cas).
+- Coût réel de plusieurs dollars par vidéo généré : pas de bouton
+  "annuler", chaque clic sur "Générer" engage la dépense.
+- Sur le plan Render gratuit (disque non persistant), **téléchargez vos
+  vidéos rapidement** après génération.
+
 ## Déploiement sur Render
 
 Le dépôt contient un `render.yaml` (Blueprint Render) prêt à l'emploi.
@@ -136,7 +168,11 @@ stockage (base de données + stockage objet S3-compatible).
 
 ```
 personalysing/
-├── server.js                 # Point d'entrée Express, toutes les routes
+├── server.js                    # Point d'entrée Express, routes principales
+├── routes/
+│   ├── seo.js                    # Optimiseur SEO (DeepSeek)
+│   ├── mockups.js                 # Générateur de mockups (Replicate)
+│   └── videos.js                   # Générateur de vidéos (Runway)
 ├── lib/
 │   ├── fontSetup.js           # Enregistre assets/fonts auprès de fontconfig
 │   ├── fonts.js                # Registre des polices disponibles
@@ -144,12 +180,17 @@ personalysing/
 │   ├── auth.js                   # Inscription / connexion / sessions
 │   ├── uploads.js                 # Upload d'images (multer + normalisation sharp)
 │   ├── imageCompose.js             # Moteur de composition texte-sur-image
-│   └── etsyClient.js                # Client OAuth2/API Etsy Open API v3
+│   ├── perspectiveWarp.js           # Déformation en perspective (corner-pin)
+│   ├── etsyClient.js                 # Client OAuth2/API Etsy Open API v3
+│   ├── deepseekClient.js              # Client API DeepSeek (SEO)
+│   ├── replicateClient.js              # Client API Replicate (mockups)
+│   └── runwayClient.js                  # Client API Runway (vidéos)
 ├── assets/fonts/               # Polices embarquées (SIL OFL)
 ├── public/                     # Frontend statique (HTML/CSS/JS, sans framework)
 │   ├── index.html               # Landing + connexion/inscription
 │   ├── dashboard.html            # Templates + file d'aperçus à envoyer
 │   ├── template.html              # Éditeur de template (zone + aperçu live)
+│   ├── seo.html, mockups.html, videos.html  # Outils IA
 │   ├── common.js, style.css
 ├── data/                        # Généré au runtime (JSON + images), non versionné
 ├── .env.example

@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Optimiseur SEO — Personalysing</title>
+<link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <nav class="nav">
+    <div class="brand">Personal<span>ysing</span></div>
+    <div class="nav-links">
+      <a href="/dashboard.html" class="btn secondary small">← Retour au tableau de bord</a>
+    </div>
+  </nav>
+
+  <main class="main container" style="padding-top:28px;max-width:760px">
+    <h1>🔍 Optimiseur SEO Etsy</h1>
+    <p class="muted">
+      Décrivez votre produit en quelques mots, l'IA génère un titre, 13 tags
+      et une description optimisés pour la recherche Etsy.
+    </p>
+
+    <div id="notConfigured" class="card" style="display:none">
+      <p><span class="badge pending">Non configuré</span></p>
+      <p class="muted">
+        Renseignez <code>DEEPSEEK_API_KEY</code> dans les variables
+        d'environnement pour activer cet outil (voir README.md).
+      </p>
+    </div>
+
+    <div id="errorBox" class="error-box"></div>
+
+    <div id="formCard" class="card">
+      <div class="field">
+        <label for="description">Description du produit</label>
+        <textarea id="description" rows="4" placeholder="ex : collier fin en argent avec un pendentif prénom personnalisable, gravure manuscrite, idéal cadeau naissance ou anniversaire"></textarea>
+      </div>
+      <button id="generateBtn" class="btn block" type="button">Générer le SEO</button>
+    </div>
+
+    <div id="resultCard" class="card" style="margin-top:16px;display:none">
+      <h3 style="margin-top:0">Titre</h3>
+      <p id="resTitle" style="font-weight:600"></p>
+      <button class="btn small secondary copy-btn" data-target="resTitle" type="button">Copier le titre</button>
+
+      <h3>Tags (13)</h3>
+      <div id="resTags" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px"></div>
+      <button class="btn small secondary" id="copyTagsBtn" type="button">Copier tous les tags</button>
+
+      <h3>Description</h3>
+      <p id="resDescription" class="muted"></p>
+      <button class="btn small secondary copy-btn" data-target="resDescription" type="button">Copier la description</button>
+    </div>
+
+    <h2 style="margin-top:32px">Historique</h2>
+    <div id="historyList"></div>
+  </main>
+
+  <script src="/common.js"></script>
+  <script>
+    const errorBox = document.getElementById('errorBox');
+    let lastTags = [];
+
+    async function copyText(text) {
+      try {
+        await navigator.clipboard.writeText(text);
+      } catch {
+        // navigateur sans accès presse-papier : ignore silencieusement
+      }
+    }
+
+    document.querySelectorAll('.copy-btn').forEach((btn) => {
+      btn.addEventListener('click', () => copyText(document.getElementById(btn.dataset.target).textContent));
+    });
+    document.getElementById('copyTagsBtn').addEventListener('click', () => copyText(lastTags.join(', ')));
+
+    function renderResult(r) {
+      document.getElementById('resultCard').style.display = '';
+      document.getElementById('resTitle').textContent = r.title;
+      document.getElementById('resDescription').textContent = r.description;
+      lastTags = r.tags;
+      document.getElementById('resTags').innerHTML = r.tags
+        .map((t) => `<span class="badge">${escapeHtml(t)}</span>`)
+        .join('');
+    }
+
+    async function loadHistory() {
+      const { results } = await api('/api/seo/history');
+      const list = document.getElementById('historyList');
+      if (!results.length) {
+        list.innerHTML = `<div class="empty-state">Aucune génération pour l'instant.</div>`;
+        return;
+      }
+      list.innerHTML = results
+        .map(
+          (r) => `
+        <div class="preview-item" data-id="${r.id}" style="align-items:flex-start">
+          <div class="info">
+            <strong>${escapeHtml(r.title)}</strong>
+            <span class="muted">${escapeHtml(r.input)}</span>
+          </div>
+          <div class="actions">
+            <button class="btn small danger delete-btn" type="button">Supprimer</button>
+          </div>
+        </div>`
+        )
+        .join('');
+      list.querySelectorAll('.delete-btn').forEach((btn) => {
+        btn.addEventListener('click', async () => {
+          const id = btn.closest('.preview-item').dataset.id;
+          await api(`/api/seo/${id}`, { method: 'DELETE' });
+          loadHistory();
+        });
+      });
+    }
+
+    document.getElementById('generateBtn').addEventListener('click', async () => {
+      hideError(errorBox);
+      const description = document.getElementById('description').value.trim();
+      if (!description) {
+        showError(errorBox, 'Merci de décrire votre produit.');
+        return;
+      }
+      const btn = document.getElementById('generateBtn');
+      btn.disabled = true;
+      btn.textContent = 'Génération en cours...';
+      try {
+        const { result } = await api('/api/seo/generate', { method: 'POST', body: { description } });
+        renderResult(result);
+        loadHistory();
+      } catch (err) {
+        showError(errorBox, err.message);
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Générer le SEO';
+      }
+    });
+
+    (async () => {
+      const user = await requireSession();
+      if (!user) return;
+      const { configured } = await api('/api/seo/status');
+      if (!configured) {
+        document.getElementById('notConfigured').style.display = '';
+        document.getElementById('formCard').style.display = 'none';
+      }
+      await loadHistory();
+    })();
+  </script>
+</body>
+</html>

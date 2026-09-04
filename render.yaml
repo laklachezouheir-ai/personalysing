@@ -15,3 +15,9 @@ services:
         sync: false
       - key: ETSY_REDIRECT_URI
         sync: false
+      - key: DEEPSEEK_API_KEY
+        sync: false
+      - key: REPLICATE_API_TOKEN
+        sync: false
+      - key: RUNWAY_API_KEY
+        sync: false
