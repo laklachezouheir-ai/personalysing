@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Personalysing — Automatisez vos aperçus de personnalisation Etsy</title>
+<link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <nav class="nav">
+    <div class="brand">Personal<span>ysing</span></div>
+    <div class="nav-links">
+      <a href="#auth" class="btn secondary small">Se connecter</a>
+    </div>
+  </nav>
+
+  <header class="hero">
+    <h1>Ne créez plus vos mockups de personnalisation <span class="accent">à la main</span></h1>
+    <p>
+      Collez le texte que votre acheteur a personnalisé (prénom, message...),
+      Personalysing génère instantanément le visuel à lui envoyer. Fini les
+      allers-retours dans Photoshop pour chaque commande.
+    </p>
+  </header>
+
+  <section class="pitch">
+    <div class="item">
+      <h3>⏱️ Gain de temps réel</h3>
+      <p>Ce qui prenait 5 à 10 min par commande devient instantané.</p>
+    </div>
+    <div class="item">
+      <h3>🎨 Vos templates, votre style</h3>
+      <p>Définissez une fois la zone de texte, la police et la couleur par produit.</p>
+    </div>
+    <div class="item">
+      <h3>🛍️ Pensé pour Etsy</h3>
+      <p>Fonctionne dès aujourd'hui, même avant la connexion automatique à votre boutique.</p>
+    </div>
+  </section>
+
+  <section id="auth" class="auth-wrap card">
+    <div class="tabs">
+      <button id="tabLogin" class="active" type="button">Connexion</button>
+      <button id="tabSignup" type="button">Créer un compte</button>
+    </div>
+
+    <div id="errorBox" class="error-box"></div>
+
+    <form id="loginForm">
+      <div class="field">
+        <label for="loginEmail">Email</label>
+        <input id="loginEmail" type="email" required autocomplete="email" />
+      </div>
+      <div class="field">
+        <label for="loginPassword">Mot de passe</label>
+        <input id="loginPassword" type="password" required autocomplete="current-password" />
+      </div>
+      <button class="btn block" type="submit">Se connecter</button>
+    </form>
+
+    <form id="signupForm" style="display:none">
+      <div class="field">
+        <label for="signupShop">Nom de votre boutique</label>
+        <input id="signupShop" type="text" placeholder="ex : AtelierEmma" />
+      </div>
+      <div class="field">
+        <label for="signupEmail">Email</label>
+        <input id="signupEmail" type="email" required autocomplete="email" />
+      </div>
+      <div class="field">
+        <label for="signupPassword">Mot de passe</label>
+        <input id="signupPassword" type="password" required minlength="8" autocomplete="new-password" />
+        <div class="hint">8 caractères minimum.</div>
+      </div>
+      <button class="btn block" type="submit">Créer mon compte</button>
+    </form>
+  </section>
+
+  <script src="/common.js"></script>
+  <script>
+    const tabLogin = document.getElementById('tabLogin');
+    const tabSignup = document.getElementById('tabSignup');
+    const loginForm = document.getElementById('loginForm');
+    const signupForm = document.getElementById('signupForm');
+    const errorBox = document.getElementById('errorBox');
+
+    tabLogin.onclick = () => {
+      tabLogin.classList.add('active');
+      tabSignup.classList.remove('active');
+      loginForm.style.display = '';
+      signupForm.style.display = 'none';
+      hideError(errorBox);
+    };
+    tabSignup.onclick = () => {
+      tabSignup.classList.add('active');
+      tabLogin.classList.remove('active');
+      signupForm.style.display = '';
+      loginForm.style.display = 'none';
+      hideError(errorBox);
+    };
+
+    loginForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      hideError(errorBox);
+      try {
+        await api('/api/login', {
+          method: 'POST',
+          body: {
+            email: document.getElementById('loginEmail').value,
+            password: document.getElementById('loginPassword').value,
+          },
+        });
+        window.location.href = '/dashboard.html';
+      } catch (err) {
+        showError(errorBox, err.message);
+      }
+    });
+
+    signupForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      hideError(errorBox);
+      try {
+        await api('/api/signup', {
+          method: 'POST',
+          body: {
+            shopName: document.getElementById('signupShop').value,
+            email: document.getElementById('signupEmail').value,
+            password: document.getElementById('signupPassword').value,
+          },
+        });
+        window.location.href = '/dashboard.html';
+      } catch (err) {
+        showError(errorBox, err.message);
+      }
+    });
+
+    // Si déjà connecté, on saute direct au dashboard.
+    api('/api/me').then(({ user }) => {
+      if (user) window.location.href = '/dashboard.html';
+    });
+  </script>
+</body>
+</html>

@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Tableau de bord — Personalysing</title>
+<link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <nav class="nav">
+    <div class="brand">Personal<span>ysing</span></div>
+    <div class="nav-links">
+      <span id="userLabel" class="muted"></span>
+      <button id="logoutBtn" class="btn secondary small" type="button">Déconnexion</button>
+    </div>
+  </nav>
+
+  <div class="app-shell">
+    <aside class="sidebar">
+      <a href="#previews" class="side-link active" data-tab="previews">📥 Aperçus à envoyer</a>
+      <a href="#templates" class="side-link" data-tab="templates">🖼️ Mes templates</a>
+      <a href="#etsy" class="side-link" data-tab="etsy">🔌 Connexion Etsy</a>
+    </aside>
+
+    <main class="main">
+      <section id="panel-previews">
+        <div class="section-head">
+          <h1>Aperçus à envoyer</h1>
+        </div>
+        <p class="muted">
+          Générés à partir d'une commande (manuellement ou via Etsy une fois connecté).
+          Téléchargez l'image et envoyez-la à l'acheteur depuis Etsy Messages.
+        </p>
+        <div id="previewList"></div>
+      </section>
+
+      <section id="panel-templates" style="display:none">
+        <div class="section-head">
+          <h1>Mes templates</h1>
+          <a href="/template.html" class="btn">+ Nouveau template</a>
+        </div>
+        <div id="templateGrid" class="grid cols-2"></div>
+      </section>
+
+      <section id="panel-etsy" style="display:none">
+        <h1>Connexion Etsy</h1>
+        <div id="etsyStatus" class="card"></div>
+      </section>
+    </main>
+  </div>
+
+  <script src="/common.js"></script>
+  <script>
+    let currentUser = null;
+
+    const tabs = document.querySelectorAll('.side-link');
+    const panels = {
+      previews: document.getElementById('panel-previews'),
+      templates: document.getElementById('panel-templates'),
+      etsy: document.getElementById('panel-etsy'),
+    };
+    tabs.forEach((tab) => {
+      tab.addEventListener('click', (e) => {
+        e.preventDefault();
+        tabs.forEach((t) => t.classList.remove('active'));
+        tab.classList.add('active');
+        Object.entries(panels).forEach(([key, el]) => {
+          el.style.display = key === tab.dataset.tab ? '' : 'none';
+        });
+        if (tab.dataset.tab === 'etsy') loadEtsyStatus();
+      });
+    });
+
+    document.getElementById('logoutBtn').addEventListener('click', async () => {
+      await api('/api/logout', { method: 'POST' });
+      window.location.href = '/';
+    });
+
+    async function loadTemplates() {
+      const { templates } = await api('/api/templates');
+      const grid = document.getElementById('templateGrid');
+      if (!templates.length) {
+        grid.innerHTML = `<div class="empty-state">
+          Aucun template pour l'instant. Créez-en un pour commencer à générer des aperçus.
+        </div>`;
+        return;
+      }
+      grid.innerHTML = templates
+        .map(
+          (t) => `
+        <div class="card tpl-card">
+          <img src="/api/templates/${t.id}/image" alt="${escapeHtml(t.name)}" />
+          <h3>${escapeHtml(t.name)}</h3>
+          <div class="muted" style="font-size:0.82rem">Zone : ${t.zone.width}×${t.zone.height}px</div>
+          <div class="row">
+            <a class="btn small secondary" href="/template.html?id=${t.id}">Modifier</a>
+            <a class="btn small" href="/template.html?id=${t.id}#generate">Générer un aperçu</a>
+          </div>
+        </div>`
+        )
+        .join('');
+    }
+
+    async function loadPreviews() {
+      const { previews } = await api('/api/previews');
+      const list = document.getElementById('previewList');
+      if (!previews.length) {
+        list.innerHTML = `<div class="empty-state">
+          Rien pour l'instant. Ouvrez un template et cliquez sur « Générer un aperçu »
+          pour traiter votre première commande.
+        </div>`;
+        return;
+      }
+      list.innerHTML = previews
+        .map(
+          (p) => `
+        <div class="preview-item" data-id="${p.id}">
+          <img src="/api/previews/${p.id}/image" alt="" />
+          <div class="info">
+            <strong>${escapeHtml(p.templateName)}</strong>
+            <span class="muted">« ${escapeHtml(p.text)} »${p.buyerName ? ' — ' + escapeHtml(p.buyerName) : ''}</span><br/>
+            <span class="badge ${p.status === 'ready' ? 'pending' : ''}">${p.status === 'ready' ? 'À envoyer' : 'Envoyé'}</span>
+          </div>
+          <div class="actions">
+            <a class="btn small secondary" href="/api/previews/${p.id}/image" download="apercu-${p.id}.png">Télécharger</a>
+            ${
+              p.status === 'ready'
+                ? `<button class="btn small mark-sent" type="button">Marquer envoyé</button>`
+                : ''
+            }
+          </div>
+        </div>`
+        )
+        .join('');
+
+      list.querySelectorAll('.mark-sent').forEach((btn) => {
+        btn.addEventListener('click', async () => {
+          const id = btn.closest('.preview-item').dataset.id;
+          await api(`/api/previews/${id}/mark-sent`, { method: 'POST' });
+          loadPreviews();
+        });
+      });
+    }
+
+    async function loadEtsyStatus() {
+      const box = document.getElementById('etsyStatus');
+      const status = await api('/api/etsy/status');
+      if (!status.configured) {
+        box.innerHTML = `
+          <p><span class="badge pending">Non configuré</span></p>
+          <p class="muted">
+            La connexion automatique à Etsy nécessite une clé API (accès "Commercial"
+            en cours de demande). En attendant, générez vos aperçus manuellement
+            depuis vos templates — ça fonctionne dès maintenant.
+          </p>`;
+        return;
+      }
+      if (status.connected) {
+        box.innerHTML = `<p><span class="badge">Connecté</span></p>
+          <p class="muted">Boutique liée depuis le ${new Date(status.shop.connectedAt).toLocaleDateString('fr-FR')}.</p>`;
+      } else {
+        box.innerHTML = `<p class="muted">Connectez votre boutique Etsy pour recevoir vos commandes automatiquement.</p>
+          <button id="connectEtsyBtn" class="btn">Connecter ma boutique Etsy</button>`;
+        document.getElementById('connectEtsyBtn').addEventListener('click', async () => {
+          const { url } = await api('/api/etsy/connect');
+          window.location.href = url;
+        });
+      }
+    }
+
+    (async () => {
+      currentUser = await requireSession();
+      if (!currentUser) return;
+      document.getElementById('userLabel').textContent = currentUser.shopName || currentUser.email;
+      await loadPreviews();
+      await loadTemplates();
+      if (new URLSearchParams(window.location.search).get('etsy') === 'connected') {
+        document.querySelector('[data-tab="etsy"]').click();
+      }
+    })();
+  </script>
+</body>
+</html>

@@ -1,0 +1,323 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Éditeur de template — Personalysing</title>
+<link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <nav class="nav">
+    <div class="brand">Personal<span>ysing</span></div>
+    <div class="nav-links">
+      <a href="/dashboard.html" class="btn secondary small">← Retour au tableau de bord</a>
+    </div>
+  </nav>
+
+  <main class="main container" style="padding-top:28px">
+    <div id="errorBox" class="error-box"></div>
+
+    <!-- Étape 1 : créer un nouveau template (upload de l'image de base) -->
+    <section id="createSection" class="card" style="max-width:480px">
+      <h1 style="margin-top:0">Nouveau template</h1>
+      <div class="field">
+        <label for="tplName">Nom (ex : Collier prénom - argent)</label>
+        <input id="tplName" type="text" required />
+      </div>
+      <div class="field">
+        <label for="tplImage">Photo du produit vierge</label>
+        <input id="tplImage" type="file" accept="image/png,image/jpeg,image/webp" required />
+        <div class="hint">PNG/JPG/WEBP, 8 Mo max. Utilisez une photo nette, produit centré.</div>
+      </div>
+      <button id="createBtn" class="btn block" type="button">Créer et configurer la zone de texte</button>
+    </section>
+
+    <!-- Étape 2 : éditeur (une fois le template créé) -->
+    <section id="editSection" style="display:none">
+      <div class="section-head">
+        <h1 id="editTitle">Éditer le template</h1>
+        <div>
+          <button id="deleteBtn" class="btn danger small" type="button">Supprimer</button>
+        </div>
+      </div>
+
+      <div class="editor-grid">
+        <div>
+          <div class="canvas-wrap" id="canvasWrap">
+            <img id="baseImg" src="" alt="Photo du template" />
+            <div class="zone-box" id="zoneBox"><div class="handle" id="zoneHandle"></div></div>
+          </div>
+          <p class="hint">Déplacez le cadre sur la zone où le texte doit apparaître ; tirez le coin pour redimensionner.</p>
+
+          <div class="card" style="margin-top:16px">
+            <h3 style="margin-top:0">Aperçu en direct</h3>
+            <div class="field">
+              <label for="sampleText">Texte d'essai</label>
+              <input id="sampleText" type="text" value="Emma" />
+            </div>
+            <img id="livePreview" alt="Aperçu" style="max-width:100%;border-radius:8px;border:1px solid var(--border)" />
+          </div>
+        </div>
+
+        <div class="card">
+          <h3 style="margin-top:0">Réglages du texte</h3>
+          <div class="field">
+            <label for="fName">Nom du template</label>
+            <input id="fName" type="text" />
+          </div>
+          <div class="field">
+            <label for="fFontSize">Taille de police</label>
+            <input id="fFontSize" type="number" min="8" max="200" />
+          </div>
+          <div class="field">
+            <label for="fColor">Couleur du texte</label>
+            <input id="fColor" type="color" />
+          </div>
+          <div class="field">
+            <label for="fFontFamily">Police</label>
+            <select id="fFontFamily">
+              <option value="sans-serif">Sans-serif (moderne)</option>
+              <option value="sans-serif-bold">Sans-serif gras</option>
+              <option value="modern">Moderne (Montserrat)</option>
+              <option value="serif">Élégant (serif)</option>
+              <option value="serif-bold">Élégant gras</option>
+              <option value="cursive">Manuscrite</option>
+              <option value="script">Calligraphiée</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="fAlign">Alignement</label>
+            <select id="fAlign">
+              <option value="center">Centré</option>
+              <option value="left">Gauche</option>
+              <option value="right">Droite</option>
+            </select>
+          </div>
+          <button id="saveBtn" class="btn block" type="button">Enregistrer</button>
+
+          <hr style="margin:20px 0;border:none;border-top:1px solid var(--border)" />
+
+          <h3 id="generate" style="margin-top:0">Générer un aperçu de commande</h3>
+          <p class="hint">Collez le texte personnalisé reçu dans une vraie commande Etsy.</p>
+          <div class="field">
+            <label for="orderText">Texte personnalisé</label>
+            <input id="orderText" type="text" placeholder="ex : Emma" />
+          </div>
+          <div class="field">
+            <label for="orderBuyer">Nom de l'acheteur (optionnel)</label>
+            <input id="orderBuyer" type="text" />
+          </div>
+          <button id="generateOrderBtn" class="btn block secondary" type="button">Générer l'aperçu</button>
+          <div id="orderResult" style="margin-top:12px"></div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <script src="/common.js"></script>
+  <script>
+    const params = new URLSearchParams(window.location.search);
+    let templateId = params.get('id');
+    let template = null;
+    const errorBox = document.getElementById('errorBox');
+
+    const createSection = document.getElementById('createSection');
+    const editSection = document.getElementById('editSection');
+
+    function debounce(fn, ms) {
+      let t;
+      return (...args) => {
+        clearTimeout(t);
+        t = setTimeout(() => fn(...args), ms);
+      };
+    }
+
+    // --- Étape 1 : création ---
+    document.getElementById('createBtn').addEventListener('click', async () => {
+      hideError(errorBox);
+      const name = document.getElementById('tplName').value.trim();
+      const fileInput = document.getElementById('tplImage');
+      if (!name || !fileInput.files[0]) {
+        showError(errorBox, 'Nom et image sont requis.');
+        return;
+      }
+      const fd = new FormData();
+      fd.append('name', name);
+      fd.append('image', fileInput.files[0]);
+      fd.append('zone', JSON.stringify({ x: 20, y: 20, width: 200, height: 60, fontSize: 32, color: '#111111', fontFamily: 'sans-serif', align: 'center' }));
+      try {
+        const { template: created } = await api('/api/templates', { method: 'POST', body: fd });
+        window.location.href = `/template.html?id=${created.id}`;
+      } catch (err) {
+        showError(errorBox, err.message);
+      }
+    });
+
+    // --- Étape 2 : édition ---
+    async function loadTemplate() {
+      const { template: t } = await api(`/api/templates/${templateId}`);
+      template = t;
+      createSection.style.display = 'none';
+      editSection.style.display = '';
+      document.getElementById('editTitle').textContent = t.name;
+      document.getElementById('baseImg').src = `/api/templates/${t.id}/image`;
+      document.getElementById('fName').value = t.name;
+      document.getElementById('fFontSize').value = t.zone.fontSize;
+      document.getElementById('fColor').value = t.zone.color;
+      document.getElementById('fFontFamily').value = t.zone.fontFamily;
+      document.getElementById('fAlign').value = t.zone.align;
+      document.getElementById('baseImg').addEventListener('load', positionZoneBox, { once: true });
+      if (document.getElementById('baseImg').complete) positionZoneBox();
+    }
+
+    function currentZoneFromForm() {
+      return {
+        x: template.zone.x,
+        y: template.zone.y,
+        width: template.zone.width,
+        height: template.zone.height,
+        fontSize: Number(document.getElementById('fFontSize').value) || 32,
+        color: document.getElementById('fColor').value,
+        fontFamily: document.getElementById('fFontFamily').value,
+        align: document.getElementById('fAlign').value,
+      };
+    }
+
+    // --- Boîte de zone : positionnement, déplacement, redimensionnement ---
+    const canvasWrap = document.getElementById('canvasWrap');
+    const zoneBox = document.getElementById('zoneBox');
+    const zoneHandle = document.getElementById('zoneHandle');
+    const baseImg = document.getElementById('baseImg');
+
+    function scaleRatio() {
+      return baseImg.clientWidth / (baseImg.naturalWidth || baseImg.clientWidth || 1);
+    }
+
+    function positionZoneBox() {
+      const r = scaleRatio();
+      zoneBox.style.left = `${template.zone.x * r}px`;
+      zoneBox.style.top = `${template.zone.y * r}px`;
+      zoneBox.style.width = `${template.zone.width * r}px`;
+      zoneBox.style.height = `${template.zone.height * r}px`;
+      refreshPreview();
+    }
+
+    function startDrag(e, mode) {
+      e.preventDefault();
+      const startX = e.clientX;
+      const startY = e.clientY;
+      const orig = { ...template.zone };
+      const r = scaleRatio();
+
+      function onMove(ev) {
+        const dx = (ev.clientX - startX) / r;
+        const dy = (ev.clientY - startY) / r;
+        if (mode === 'move') {
+          template.zone.x = Math.max(0, orig.x + dx);
+          template.zone.y = Math.max(0, orig.y + dy);
+        } else {
+          template.zone.width = Math.max(20, orig.width + dx);
+          template.zone.height = Math.max(15, orig.height + dy);
+        }
+        positionZoneBox();
+      }
+      function onUp() {
+        window.removeEventListener('mousemove', onMove);
+        window.removeEventListener('mouseup', onUp);
+      }
+      window.addEventListener('mousemove', onMove);
+      window.addEventListener('mouseup', onUp);
+    }
+    zoneBox.addEventListener('mousedown', (e) => {
+      if (e.target === zoneHandle) return;
+      startDrag(e, 'move');
+    });
+    zoneHandle.addEventListener('mousedown', (e) => {
+      e.stopPropagation();
+      startDrag(e, 'resize');
+    });
+    window.addEventListener('resize', () => template && positionZoneBox());
+
+    // --- Aperçu en direct (appelle le vrai moteur de rendu côté serveur) ---
+    const refreshPreview = debounce(async () => {
+      if (!template) return;
+      const zone = currentZoneFromForm();
+      zone.x = template.zone.x;
+      zone.y = template.zone.y;
+      zone.width = template.zone.width;
+      zone.height = template.zone.height;
+      const text = document.getElementById('sampleText').value || '';
+      const res = await fetch(`/api/templates/${templateId}/preview`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text, zone }),
+      });
+      if (!res.ok) return;
+      const blob = await res.blob();
+      document.getElementById('livePreview').src = URL.createObjectURL(blob);
+    }, 300);
+
+    ['fFontSize', 'fColor', 'fFontFamily', 'fAlign', 'sampleText'].forEach((id) => {
+      document.getElementById(id).addEventListener('input', refreshPreview);
+    });
+
+    document.getElementById('saveBtn').addEventListener('click', async () => {
+      hideError(errorBox);
+      try {
+        const zone = currentZoneFromForm();
+        const name = document.getElementById('fName').value.trim();
+        const { template: updated } = await api(`/api/templates/${templateId}`, {
+          method: 'PUT',
+          body: { name, zone: JSON.stringify(zone) },
+        });
+        template = updated;
+        document.getElementById('editTitle').textContent = updated.name;
+      } catch (err) {
+        showError(errorBox, err.message);
+      }
+    });
+
+    document.getElementById('deleteBtn').addEventListener('click', async () => {
+      if (!confirm('Supprimer ce template définitivement ?')) return;
+      await api(`/api/templates/${templateId}`, { method: 'DELETE' });
+      window.location.href = '/dashboard.html';
+    });
+
+    document.getElementById('generateOrderBtn').addEventListener('click', async () => {
+      hideError(errorBox);
+      const text = document.getElementById('orderText').value.trim();
+      const buyerName = document.getElementById('orderBuyer').value.trim();
+      if (!text) {
+        showError(errorBox, 'Le texte personnalisé est requis.');
+        return;
+      }
+      try {
+        const { preview } = await api(`/api/templates/${templateId}/generate`, {
+          method: 'POST',
+          body: { text, buyerName },
+        });
+        document.getElementById('orderResult').innerHTML = `
+          <p class="badge pending">Aperçu généré</p>
+          <img src="/api/previews/${preview.id}/image" style="max-width:100%;border-radius:8px;border:1px solid var(--border)" />
+          <p><a class="btn small" href="/dashboard.html">Voir dans « Aperçus à envoyer »</a></p>
+        `;
+        document.getElementById('orderText').value = '';
+        document.getElementById('orderBuyer').value = '';
+      } catch (err) {
+        showError(errorBox, err.message);
+      }
+    });
+
+    (async () => {
+      const user = await requireSession();
+      if (!user) return;
+      if (templateId) {
+        await loadTemplate();
+        if (window.location.hash === '#generate') {
+          document.getElementById('orderText').focus();
+        }
+      }
+    })();
+  </script>
+</body>
+</html>
