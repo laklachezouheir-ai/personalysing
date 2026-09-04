@@ -3,11 +3,10 @@
 // retravaillé (fond/ambiance) prêt pour sa fiche Etsy. Utilise Replicate
 // (lib/replicateClient.js) — inactif tant que REPLICATE_API_TOKEN n'est
 // pas configurée.
-const fs = require('fs');
-const path = require('path');
 const express = require('express');
 const auth = require('../lib/auth');
 const store = require('../lib/store');
+const fileStore = require('../lib/fileStore');
 const { upload } = require('../lib/uploads');
 const replicate = require('../lib/replicateClient');
 const quotas = require('../lib/quotas');
@@ -15,9 +14,7 @@ const { requirePro } = require('../lib/billing');
 
 const router = express.Router();
 const MAX_PROMPT_LENGTH = 300;
-
-const MOCKUP_DIR = path.join(__dirname, '..', 'data', 'mockups');
-if (!fs.existsSync(MOCKUP_DIR)) fs.mkdirSync(MOCKUP_DIR, { recursive: true });
+const KIND = 'mockups';
 
 // Préréglages de mise en scène — évite au vendeur de devoir écrire un
 // prompt IA lui-même.
@@ -84,7 +81,7 @@ router.post('/generate', auth.requireAuth, requirePro, upload.single('image'), a
 
     const imgRes = await fetch(urls[0]);
     const buffer = Buffer.from(await imgRes.arrayBuffer());
-    fs.writeFileSync(path.join(MOCKUP_DIR, `${record.id}.png`), buffer);
+    await fileStore.save(KIND, record.id, 'png', buffer, 'image/png');
 
     res.status(201).json({ mockup: record });
   } catch (err) {
@@ -96,9 +93,7 @@ router.get('/:id/image', auth.requireAuth, async (req, res, next) => {
   try {
     const mockup = await store.find('mockups', (m) => m.id === req.params.id && m.userId === req.user.id);
     if (!mockup) return res.status(404).end();
-    const filePath = path.join(MOCKUP_DIR, `${mockup.id}.png`);
-    if (!fs.existsSync(filePath)) return res.status(404).end();
-    res.sendFile(filePath);
+    await fileStore.serve(res, KIND, mockup.id, 'png');
   } catch (err) {
     next(err);
   }
@@ -109,8 +104,7 @@ router.delete('/:id', auth.requireAuth, async (req, res, next) => {
     const mockup = await store.find('mockups', (m) => m.id === req.params.id && m.userId === req.user.id);
     if (!mockup) return res.status(404).json({ error: 'Introuvable.' });
     await store.remove('mockups', mockup.id);
-    const filePath = path.join(MOCKUP_DIR, `${mockup.id}.png`);
-    if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+    await fileStore.remove(KIND, mockup.id, 'png');
     res.json({ ok: true });
   } catch (err) {
     next(err);

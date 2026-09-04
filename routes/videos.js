@@ -15,11 +15,10 @@
 // en cours au moment d'un redéploiement restera "processing" indéfiniment
 // côté app (elle continue côté Runway, mais il faudra vérifier son statut
 // manuellement sur le tableau de bord Runway dans ce cas).
-const fs = require('fs');
-const path = require('path');
 const express = require('express');
 const auth = require('../lib/auth');
 const store = require('../lib/store');
+const fileStore = require('../lib/fileStore');
 const { upload } = require('../lib/uploads');
 const runway = require('../lib/runwayClient');
 const quotas = require('../lib/quotas');
@@ -27,9 +26,7 @@ const { requirePro } = require('../lib/billing');
 
 const router = express.Router();
 const MAX_PROMPT_LENGTH = 300;
-
-const VIDEO_DIR = path.join(__dirname, '..', 'data', 'videos');
-if (!fs.existsSync(VIDEO_DIR)) fs.mkdirSync(VIDEO_DIR, { recursive: true });
+const KIND = 'videos';
 
 const POLL_INTERVAL_MS = 8000;
 const MAX_POLL_MS = 10 * 60 * 1000; // 10 min de suivi max
@@ -53,7 +50,7 @@ async function trackTask(recordId, taskId) {
         if (!videoUrl) throw new Error('Aucune vidéo dans la réponse Runway.');
         const res = await fetch(videoUrl);
         const buffer = Buffer.from(await res.arrayBuffer());
-        fs.writeFileSync(path.join(VIDEO_DIR, `${recordId}.mp4`), buffer);
+        await fileStore.save(KIND, recordId, 'mp4', buffer, 'video/mp4');
         await store.update('videos', recordId, { status: 'ready' });
         return;
       }
@@ -135,9 +132,7 @@ router.get('/:id/file', auth.requireAuth, async (req, res, next) => {
   try {
     const video = await store.find('videos', (v) => v.id === req.params.id && v.userId === req.user.id);
     if (!video) return res.status(404).end();
-    const filePath = path.join(VIDEO_DIR, `${video.id}.mp4`);
-    if (!fs.existsSync(filePath)) return res.status(404).end();
-    res.sendFile(filePath);
+    await fileStore.serve(res, KIND, video.id, 'mp4');
   } catch (err) {
     next(err);
   }
@@ -148,8 +143,7 @@ router.delete('/:id', auth.requireAuth, async (req, res, next) => {
     const video = await store.find('videos', (v) => v.id === req.params.id && v.userId === req.user.id);
     if (!video) return res.status(404).json({ error: 'Introuvable.' });
     await store.remove('videos', video.id);
-    const filePath = path.join(VIDEO_DIR, `${video.id}.mp4`);
-    if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+    await fileStore.remove(KIND, video.id, 'mp4');
     res.json({ ok: true });
   } catch (err) {
     next(err);

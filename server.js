@@ -1,6 +1,5 @@
 require('./lib/fontSetup'); // doit s'exécuter avant tout require('sharp')
 require('dotenv').config();
-const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const express = require('express');
@@ -229,8 +228,7 @@ app.delete(
     const template = await getOwnedTemplate(req.user.id, req.params.id);
     if (!template) return res.status(404).json({ error: 'Template introuvable.' });
     await store.remove('templates', template.id);
-    const imgPath = uploads.templateImagePath(template.id);
-    if (fs.existsSync(imgPath)) fs.unlinkSync(imgPath);
+    await uploads.removeTemplateImage(template.id);
     res.json({ ok: true });
   })
 );
@@ -241,9 +239,7 @@ app.get(
   asyncRoute(async (req, res) => {
     const template = await getOwnedTemplate(req.user.id, req.params.id);
     if (!template) return res.status(404).end();
-    const imgPath = uploads.templateImagePath(template.id);
-    if (!fs.existsSync(imgPath)) return res.status(404).end();
-    res.sendFile(imgPath);
+    await uploads.serveTemplateImage(res, template.id);
   })
 );
 
@@ -255,15 +251,11 @@ app.post(
   asyncRoute(async (req, res) => {
     const template = await getOwnedTemplate(req.user.id, req.params.id);
     if (!template) return res.status(404).json({ error: 'Template introuvable.' });
-    const imgPath = uploads.templateImagePath(template.id);
-    if (!fs.existsSync(imgPath)) return res.status(404).json({ error: 'Image de base manquante.' });
+    const baseImage = await uploads.getTemplateImageBuffer(template.id);
+    if (!baseImage) return res.status(404).json({ error: 'Image de base manquante.' });
 
     const zone = req.body.zone ? parseZone(req.body.zone) : template.zone;
-    const buffer = await composePersonalization(
-      fs.readFileSync(imgPath),
-      zone,
-      req.body.text || ''
-    );
+    const buffer = await composePersonalization(baseImage, zone, req.body.text || '');
     res.set('Content-Type', 'image/png');
     res.send(buffer);
   })
@@ -283,8 +275,9 @@ app.post(
     const text = String(req.body.text || '').trim();
     if (!text) throw Object.assign(new Error('Le texte de personnalisation est requis.'), { status: 400 });
 
-    const imgPath = uploads.templateImagePath(template.id);
-    const buffer = await composePersonalization(fs.readFileSync(imgPath), template.zone, text);
+    const baseImage = await uploads.getTemplateImageBuffer(template.id);
+    if (!baseImage) return res.status(404).json({ error: 'Image de base manquante.' });
+    const buffer = await composePersonalization(baseImage, template.zone, text);
 
     const preview = await store.insert('previews', {
       userId: req.user.id,
@@ -321,9 +314,7 @@ app.get(
   asyncRoute(async (req, res) => {
     const preview = await store.find('previews', (p) => p.id === req.params.id && p.userId === req.user.id);
     if (!preview) return res.status(404).end();
-    const imgPath = uploads.previewImagePath(preview.id);
-    if (!fs.existsSync(imgPath)) return res.status(404).end();
-    res.sendFile(imgPath);
+    await uploads.servePreviewImage(res, preview.id);
   })
 );
 
@@ -345,8 +336,7 @@ app.delete(
     const preview = await store.find('previews', (p) => p.id === req.params.id && p.userId === req.user.id);
     if (!preview) return res.status(404).json({ error: 'Aperçu introuvable.' });
     await store.remove('previews', preview.id);
-    const imgPath = uploads.previewImagePath(preview.id);
-    if (fs.existsSync(imgPath)) fs.unlinkSync(imgPath);
+    await uploads.removePreviewImage(preview.id);
     res.json({ ok: true });
   })
 );
@@ -445,7 +435,8 @@ app.use((err, req, res, next) => { // eslint-disable-line no-unused-vars
 
 app.listen(PORT, () => {
   console.log(`Personalysing démarré sur http://localhost:${PORT}`);
-  console.log(`Stockage : ${store.usingPostgres ? 'PostgreSQL (DATABASE_URL)' : 'fichier JSON local (dev)'}`);
+  console.log(`Stockage données : ${store.usingPostgres ? 'PostgreSQL (DATABASE_URL)' : 'fichier JSON local (dev)'}`);
+  console.log(`Stockage fichiers : ${require('./lib/fileStore').usingObjectStorage ? 'S3 (S3_ENDPOINT)' : 'disque local (dev)'}`);
   const inactive = [];
   if (!etsy.isConfigured()) inactive.push('Etsy (ETSY_API_KEY)');
   if (!require('./lib/deepseekClient').isConfigured()) inactive.push('SEO (DEEPSEEK_API_KEY)');

@@ -131,6 +131,50 @@ au prix d'un filtrage fait côté Node plutôt qu'en SQL indexé — un choix
 pragmatique pour ce stade du produit, à revoir si une collection (ex :
 `aiUsage`) grossit beaucoup.
 
+## Stockage des fichiers (photos, aperçus, mockups, vidéos)
+
+Migrer les données vers Postgres (section précédente) ne suffit pas à lui
+seul : les **fichiers binaires** (photo de template, aperçu généré, mockup,
+vidéo) restaient encore sur le disque local de l'app, donc toujours perdus
+à chaque redéploiement/veille sur Render (plan gratuit) — même avec
+`DATABASE_URL` configurée. Même principe de bascule automatique :
+
+- **Variables `S3_*` absentes** → disque local (`data/uploads`,
+  `data/previews`, `data/mockups`, `data/videos`), repli pratique pour
+  développer sans compte S3, mais **à éviter en production** pour la
+  même raison que le mode JSON ci-dessus.
+- **Variables `S3_*` définies** → stockage objet S3-compatible
+  (`lib/objectStorage.js`), persistant indépendamment du disque de l'app.
+  Les fichiers sont servis via une redirection vers une URL signée
+  temporaire (1h) : le transfert se fait directement entre le navigateur
+  et le stockage objet, pas via notre serveur — l'accès reste protégé
+  (vérification du propriétaire faite avant de générer le lien, comme
+  avant), sans exposer le bucket publiquement.
+
+### Mise en place (recommandé avant tout usage réel)
+
+**[Cloudflare R2](https://developers.cloudflare.com/r2/)** (recommandé) —
+10 Go gratuits, et surtout **aucun frais de sortie** (contrairement à AWS
+S3, où télécharger vos propres fichiers finit par coûter cher). Backblaze
+B2 ou AWS S3 fonctionnent aussi (API S3 compatible).
+
+1. Créez un bucket R2 sur le [dashboard Cloudflare](https://dash.cloudflare.com/).
+2. Générez un jeton API R2 (accès en lecture/écriture sur ce bucket) →
+   récupérez `Access Key ID`, `Secret Access Key`, et l'URL de endpoint
+   S3 (`https://<account-id>.r2.cloudflarestorage.com`).
+3. Renseignez `S3_ENDPOINT`, `S3_BUCKET`, `S3_ACCESS_KEY_ID`,
+   `S3_SECRET_ACCESS_KEY` dans `.env` (local) ou Environment sur Render
+   (`S3_REGION=auto` pour R2).
+
+### ⚠️ Limite connue
+
+Les liens « Télécharger » (aperçus, mockups, vidéos) utilisent l'attribut
+HTML `download` pour forcer l'enregistrement plutôt que l'ouverture dans
+le navigateur. Une fois redirigés vers une URL S3 (domaine différent), ce
+comportement n'est plus garanti sur tous les navigateurs — le fichier
+reste toujours accessible, mais peut s'ouvrir dans un nouvel onglet plutôt
+que se télécharger directement. Cosmétique, pas bloquant.
+
 ## Connexion Etsy (optionnelle, désactivée par défaut)
 
 La connexion à l'API Etsy est **inactive tant que `ETSY_API_KEY` et
@@ -182,8 +226,9 @@ renommé ou son schéma d'entrée changer sans préavis.
   bord dans ce cas).
 - Coût réel de plusieurs dollars par vidéo généré : pas de bouton
   "annuler", chaque clic sur "Générer" engage la dépense.
-- Sur le plan Render gratuit (disque non persistant), **téléchargez vos
-  vidéos rapidement** après génération.
+- Sans stockage S3 configuré (voir section **Stockage des fichiers**), les
+  vidéos restent sur le disque local de l'app — **téléchargez-les
+  rapidement** après génération sur le plan Render gratuit.
 
 ## Déploiement sur Render
 
@@ -201,18 +246,12 @@ Le dépôt contient un `render.yaml` (Blueprint Render) prêt à l'emploi.
 
 **⚠️ Important — disque non persistant (plan gratuit)** : sur le plan
 gratuit, le système de fichiers est réinitialisé à chaque déploiement et à
-chaque réveil du service après mise en veille (inactivité).
-
-- Avec `DATABASE_URL` configurée (voir section **Base de données**), les
-  **données** (comptes, templates, historique) survivent maintenant à ces
-  redémarrages — c'est le problème principal réglé.
-- Les **fichiers binaires** (photos de template, aperçus/mockups/vidéos
-  générés) restent en revanche stockés sur le disque local de l'app
-  (`data/uploads`, `data/previews`...) et **sont toujours perdus** dans ces
-  cas-là, même avec Postgres configuré. Pour les conserver de façon fiable,
-  passer au plan **Starter** (~7$/mois) et ajouter un disque persistant
-  monté sur `./data`, ou migrer ces fichiers vers un stockage objet
-  S3-compatible (amélioration future, non faite ici).
+chaque réveil du service après mise en veille (inactivité). Avec
+`DATABASE_URL` et les variables `S3_*` configurées (voir sections **Base
+de données** et **Stockage des fichiers**), plus aucune donnée ni fichier
+n'est perdu dans ces cas-là — les deux couches sont maintenant persistantes
+indépendamment du disque de l'app. Sans l'une ou l'autre, la partie
+correspondante (données, ou fichiers) reste soumise à cette limite.
 
 ## Structure du projet
 
@@ -231,7 +270,9 @@ personalysing/
 │   ├── storePostgres.js           # Backend PostgreSQL (actif si DATABASE_URL)
 │   ├── auth.js                     # Inscription / connexion / sessions
 │   ├── uploads.js                 # Upload d'images (multer + normalisation sharp)
-│   ├── imageCompose.js             # Moteur de composition texte-sur-image
+│   ├── fileStore.js                # API de fichiers commune (dispatch disque/S3)
+│   ├── objectStorage.js             # Backend S3-compatible (actif si S3_ENDPOINT)
+│   ├── imageCompose.js               # Moteur de composition texte-sur-image
 │   ├── perspectiveWarp.js           # Déformation en perspective (corner-pin)
 │   ├── etsyClient.js                 # Client OAuth2/API Etsy Open API v3
 │   ├── deepseekClient.js              # Client API DeepSeek (SEO)
