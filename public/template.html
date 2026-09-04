@@ -45,9 +45,17 @@
         <div>
           <div class="canvas-wrap" id="canvasWrap">
             <img id="baseImg" src="" alt="Photo du template" />
-            <div class="zone-box" id="zoneBox"><div class="handle" id="zoneHandle"></div></div>
+            <svg id="quadSvg" class="quad-svg"><polygon id="quadPolygon" class="quad-outline"></polygon></svg>
+            <div class="corner-handle" id="handle-tl" data-corner="tl"></div>
+            <div class="corner-handle" id="handle-tr" data-corner="tr"></div>
+            <div class="corner-handle" id="handle-br" data-corner="br"></div>
+            <div class="corner-handle" id="handle-bl" data-corner="bl"></div>
           </div>
-          <p class="hint">Déplacez le cadre sur la zone où le texte doit apparaître ; tirez le coin pour redimensionner.</p>
+          <p class="hint">
+            Déplacez chaque coin pour épouser l'angle réel du support dans la photo
+            (rotation, inclinaison, profondeur) — le texte sera déformé pour suivre
+            exactement ce quadrilatère, au lieu de rester plaqué à plat.
+          </p>
 
           <div class="card" style="margin-top:16px">
             <h3 style="margin-top:0">Aperçu en direct</h3>
@@ -93,6 +101,15 @@
               <option value="right">Droite</option>
             </select>
           </div>
+          <div class="field">
+            <label for="fBlend">Rendu</label>
+            <select id="fBlend">
+              <option value="normal">Normal (texte plein)</option>
+              <option value="multiply">Effet gravé (laisse voir les reflets du support)</option>
+            </select>
+            <div class="hint">« Effet gravé » fait ressortir la texture/les ombres de la photo à travers le texte — plus réaliste sur métal, bois, cuir.</div>
+          </div>
+          <button id="resetQuadBtn" class="btn secondary block" type="button" style="margin-bottom:8px">Réinitialiser la zone</button>
           <button id="saveBtn" class="btn block" type="button">Enregistrer</button>
 
           <hr style="margin:20px 0;border:none;border-top:1px solid var(--border)" />
@@ -132,24 +149,59 @@
       };
     }
 
+    function readImageSize(file) {
+      return new Promise((resolve, reject) => {
+        const img = new Image();
+        img.onload = () => resolve({ width: img.naturalWidth, height: img.naturalHeight });
+        img.onerror = reject;
+        img.src = URL.createObjectURL(file);
+      });
+    }
+
+    function defaultCorners(width, height) {
+      const x0 = Math.round(width * 0.2);
+      const x1 = Math.round(width * 0.8);
+      const y0 = Math.round(height * 0.42);
+      const y1 = Math.round(height * 0.58);
+      return {
+        tl: { x: x0, y: y0 },
+        tr: { x: x1, y: y0 },
+        br: { x: x1, y: y1 },
+        bl: { x: x0, y: y1 },
+      };
+    }
+
     // --- Étape 1 : création ---
     document.getElementById('createBtn').addEventListener('click', async () => {
       hideError(errorBox);
       const name = document.getElementById('tplName').value.trim();
       const fileInput = document.getElementById('tplImage');
-      if (!name || !fileInput.files[0]) {
+      const file = fileInput.files[0];
+      if (!name || !file) {
         showError(errorBox, 'Nom et image sont requis.');
         return;
       }
-      const fd = new FormData();
-      fd.append('name', name);
-      fd.append('image', fileInput.files[0]);
-      fd.append('zone', JSON.stringify({ x: 20, y: 20, width: 200, height: 60, fontSize: 32, color: '#111111', fontFamily: 'sans-serif', align: 'center' }));
       try {
+        const { width, height } = await readImageSize(file);
+        const corners = defaultCorners(width, height);
+        const fd = new FormData();
+        fd.append('name', name);
+        fd.append('image', file);
+        fd.append(
+          'zone',
+          JSON.stringify({
+            corners,
+            fontSize: Math.max(16, Math.round(height * 0.07)),
+            color: '#111111',
+            fontFamily: 'sans-serif',
+            align: 'center',
+            blendMode: 'normal',
+          })
+        );
         const { template: created } = await api('/api/templates', { method: 'POST', body: fd });
         window.location.href = `/template.html?id=${created.id}`;
       } catch (err) {
-        showError(errorBox, err.message);
+        showError(errorBox, err.message || "Impossible de lire l'image.");
       }
     });
 
@@ -166,60 +218,65 @@
       document.getElementById('fColor').value = t.zone.color;
       document.getElementById('fFontFamily').value = t.zone.fontFamily;
       document.getElementById('fAlign').value = t.zone.align;
-      document.getElementById('baseImg').addEventListener('load', positionZoneBox, { once: true });
-      if (document.getElementById('baseImg').complete) positionZoneBox();
+      document.getElementById('fBlend').value = t.zone.blendMode || 'normal';
+      document.getElementById('baseImg').addEventListener('load', positionHandles, { once: true });
+      if (document.getElementById('baseImg').complete) positionHandles();
     }
 
     function currentZoneFromForm() {
       return {
-        x: template.zone.x,
-        y: template.zone.y,
-        width: template.zone.width,
-        height: template.zone.height,
+        corners: template.zone.corners,
         fontSize: Number(document.getElementById('fFontSize').value) || 32,
         color: document.getElementById('fColor').value,
         fontFamily: document.getElementById('fFontFamily').value,
         align: document.getElementById('fAlign').value,
+        blendMode: document.getElementById('fBlend').value,
       };
     }
 
-    // --- Boîte de zone : positionnement, déplacement, redimensionnement ---
+    // --- Quadrilatère : positionnement des 4 coins, glisser-déposer ---
     const canvasWrap = document.getElementById('canvasWrap');
-    const zoneBox = document.getElementById('zoneBox');
-    const zoneHandle = document.getElementById('zoneHandle');
     const baseImg = document.getElementById('baseImg');
+    const quadSvg = document.getElementById('quadSvg');
+    const quadPolygon = document.getElementById('quadPolygon');
+    const CORNER_KEYS = ['tl', 'tr', 'br', 'bl'];
 
     function scaleRatio() {
       return baseImg.clientWidth / (baseImg.naturalWidth || baseImg.clientWidth || 1);
     }
 
-    function positionZoneBox() {
+    function positionHandles() {
       const r = scaleRatio();
-      zoneBox.style.left = `${template.zone.x * r}px`;
-      zoneBox.style.top = `${template.zone.y * r}px`;
-      zoneBox.style.width = `${template.zone.width * r}px`;
-      zoneBox.style.height = `${template.zone.height * r}px`;
+      quadSvg.setAttribute('width', baseImg.clientWidth);
+      quadSvg.setAttribute('height', baseImg.clientHeight);
+      const points = CORNER_KEYS.map((k) => {
+        const p = template.zone.corners[k];
+        const dx = p.x * r;
+        const dy = p.y * r;
+        const handle = document.getElementById(`handle-${k}`);
+        handle.style.left = `${dx}px`;
+        handle.style.top = `${dy}px`;
+        return `${dx},${dy}`;
+      });
+      quadPolygon.setAttribute('points', points.join(' '));
       refreshPreview();
     }
 
-    function startDrag(e, mode) {
+    function startCornerDrag(e, key) {
       e.preventDefault();
       const startX = e.clientX;
       const startY = e.clientY;
-      const orig = { ...template.zone };
+      const orig = { ...template.zone.corners[key] };
       const r = scaleRatio();
 
       function onMove(ev) {
         const dx = (ev.clientX - startX) / r;
         const dy = (ev.clientY - startY) / r;
-        if (mode === 'move') {
-          template.zone.x = Math.max(0, orig.x + dx);
-          template.zone.y = Math.max(0, orig.y + dy);
-        } else {
-          template.zone.width = Math.max(20, orig.width + dx);
-          template.zone.height = Math.max(15, orig.height + dy);
-        }
-        positionZoneBox();
+        template.zone.corners[key] = {
+          x: Math.max(0, Math.min(baseImg.naturalWidth, orig.x + dx)),
+          y: Math.max(0, Math.min(baseImg.naturalHeight, orig.y + dy)),
+        };
+        positionHandles();
       }
       function onUp() {
         window.removeEventListener('mousemove', onMove);
@@ -228,24 +285,22 @@
       window.addEventListener('mousemove', onMove);
       window.addEventListener('mouseup', onUp);
     }
-    zoneBox.addEventListener('mousedown', (e) => {
-      if (e.target === zoneHandle) return;
-      startDrag(e, 'move');
+
+    CORNER_KEYS.forEach((key) => {
+      document.getElementById(`handle-${key}`).addEventListener('mousedown', (e) => startCornerDrag(e, key));
     });
-    zoneHandle.addEventListener('mousedown', (e) => {
-      e.stopPropagation();
-      startDrag(e, 'resize');
+    window.addEventListener('resize', () => template && positionHandles());
+
+    document.getElementById('resetQuadBtn').addEventListener('click', () => {
+      if (!template) return;
+      template.zone.corners = defaultCorners(baseImg.naturalWidth, baseImg.naturalHeight);
+      positionHandles();
     });
-    window.addEventListener('resize', () => template && positionZoneBox());
 
     // --- Aperçu en direct (appelle le vrai moteur de rendu côté serveur) ---
     const refreshPreview = debounce(async () => {
       if (!template) return;
       const zone = currentZoneFromForm();
-      zone.x = template.zone.x;
-      zone.y = template.zone.y;
-      zone.width = template.zone.width;
-      zone.height = template.zone.height;
       const text = document.getElementById('sampleText').value || '';
       const res = await fetch(`/api/templates/${templateId}/preview`, {
         method: 'POST',
@@ -257,7 +312,7 @@
       document.getElementById('livePreview').src = URL.createObjectURL(blob);
     }, 300);
 
-    ['fFontSize', 'fColor', 'fFontFamily', 'fAlign', 'sampleText'].forEach((id) => {
+    ['fFontSize', 'fColor', 'fFontFamily', 'fAlign', 'fBlend', 'sampleText'].forEach((id) => {
       document.getElementById(id).addEventListener('input', refreshPreview);
     });
 

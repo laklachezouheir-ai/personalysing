@@ -18,11 +18,32 @@ le détail du positionnement produit et de la stratégie de lancement.
 ## Fonctionnement actuel (MVP)
 
 1. Le vendeur crée un compte et importe la photo vierge de son produit.
-2. Il définit la zone où le texte doit apparaître (position, taille,
-   police, couleur, alignement) avec un aperçu en direct.
+2. Il positionne les **4 coins** de la zone de texte pour épouser l'angle
+   réel du support dans la photo (rotation, inclinaison, profondeur) —
+   pas juste un rectangle à plat — avec aperçu en direct.
 3. Pour chaque commande reçue, il colle le texte personnalisé de l'acheteur
-   → l'image est générée instantanément, prête à être téléchargée et
-   envoyée depuis Etsy Messages.
+   → l'image est générée instantanément, texte déformé en perspective pour
+   suivre le support, prête à être téléchargée et envoyée depuis Etsy
+   Messages.
+
+### Positionnement en perspective (3 axes)
+
+Un simple rectangle plaqué à plat ne convainc pas sur un produit photographié
+sous un angle (bague, pendentif incliné...). L'éditeur laisse donc déplacer
+individuellement les 4 coins de la zone de texte ; `lib/perspectiveWarp.js`
+calcule la transformation projective qui envoie le texte "à plat" sur ce
+quadrilatère (technique dite *corner-pin*, la même que Printful/Placeit/
+Customily), ce qui le fait suivre la rotation, l'inclinaison horizontale et
+la profondeur apparentes du support. Un mode de fusion « Effet gravé »
+(`blend: multiply`) est aussi disponible pour laisser transparaître les
+reflets/ombres de la photo à travers le texte plutôt qu'un aplat de couleur.
+
+**Limite assumée** : c'est une déformation 2D en perspective, pas un rendu
+3D avec relief/éclairage réel (ce qui demanderait un modèle 3D du produit ou
+une génération par IA type ControlNet/depth — beaucoup plus lourd et
+coûteux). Suffisant pour une surface plane ou légèrement courbée ; moins
+convaincant sur une courbure prononcée (ex : texte qui doit s'enrouler
+autour d'un objet cylindrique vu de face).
 
 Ce flux **fonctionne dès aujourd'hui**, sans dépendre de l'API Etsy — c'est
 volontaire : l'accès "Commercial" à l'API Etsy demande une revue manuelle

@@ -49,15 +49,29 @@ function parseZone(raw) {
     }
   }
   const num = (v, fallback) => (Number.isFinite(Number(v)) ? Number(v) : fallback);
+  const point = (p, fallback) => ({
+    x: num(p?.x, fallback.x),
+    y: num(p?.y, fallback.y),
+  });
+  const defaults = {
+    tl: { x: 20, y: 100 },
+    tr: { x: 220, y: 100 },
+    br: { x: 220, y: 160 },
+    bl: { x: 20, y: 160 },
+  };
+  const c = zone?.corners || {};
   return {
-    x: num(zone?.x, 20),
-    y: num(zone?.y, 20),
-    width: num(zone?.width, 200),
-    height: num(zone?.height, 60),
+    corners: {
+      tl: point(c.tl, defaults.tl),
+      tr: point(c.tr, defaults.tr),
+      br: point(c.br, defaults.br),
+      bl: point(c.bl, defaults.bl),
+    },
     fontSize: num(zone?.fontSize, 32),
     color: typeof zone?.color === 'string' ? zone.color : '#111111',
     fontFamily: typeof zone?.fontFamily === 'string' ? zone.fontFamily : 'sans-serif',
     align: ['left', 'right', 'center'].includes(zone?.align) ? zone.align : 'center',
+    blendMode: zone?.blendMode === 'multiply' ? 'multiply' : 'normal',
   };
 }
 
